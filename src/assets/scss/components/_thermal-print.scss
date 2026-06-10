@@ -1,0 +1,106 @@
+//
+// Thermal paper (80mm) — patient slips & reception receipts
+//
+
+$thermal-paper-width: 80mm;
+
+.thermal-slip {
+  width: $thermal-paper-width;
+  max-width: $thermal-paper-width;
+  margin: 0 auto;
+  padding: 4mm 3mm;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 11pt;
+  color: #000;
+  background: #fff;
+}
+
+.thermal-slip .slip-logo {
+  width: 100%;
+  height: auto;
+  max-height: 22mm;
+  object-fit: contain;
+  display: block;
+  margin: 0 auto 3mm;
+}
+
+@media print {
+  @page {
+    size: $thermal-paper-width auto;
+    margin: 2mm;
+  }
+
+  html,
+  body {
+    width: $thermal-paper-width !important;
+    min-width: $thermal-paper-width !important;
+    max-width: $thermal-paper-width !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .thermal-print-modal,
+  .thermal-print-modal .modal-dialog,
+  .thermal-print-modal .modal-content,
+  .thermal-print-modal .modal-body,
+  .thermal-slip,
+  .thermal-slip * {
+    visibility: visible !important;
+  }
+
+  .modal-backdrop,
+  .no-print {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  .thermal-print-modal {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 99999 !important;
+    display: block !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #fff !important;
+    opacity: 1 !important;
+  }
+
+  .thermal-print-modal .modal-dialog {
+    max-width: $thermal-paper-width !important;
+    width: $thermal-paper-width !important;
+    margin: 0 auto !important;
+    transform: none !important;
+  }
+
+  .thermal-print-modal .modal-content,
+  .thermal-print-modal .modal-body {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+
+  .thermal-print-modal .modal-header,
+  .thermal-print-modal .modal-footer {
+    display: none !important;
+  }
+
+  .thermal-slip {
+    position: fixed !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: $thermal-paper-width !important;
+    max-width: $thermal-paper-width !important;
+    margin: 0 !important;
+    padding: 4mm 3mm !important;
+    background: #fff !important;
+  }
+}

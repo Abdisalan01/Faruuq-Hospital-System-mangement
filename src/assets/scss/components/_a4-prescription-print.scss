@@ -1,0 +1,591 @@
+//
+// A4 prescription letter — print & preview (Faaruuq Specialist Hospital)
+//
+
+$rx-navy: #1e4a7a;
+$rx-teal: #2ba3a3;
+$rx-teal-dark: #238f8f;
+$rx-border: #8fa8c8;
+$rx-fill: #e8eef5;
+$rx-white: #ffffff;
+
+.prescription-letter-a4,
+.a4-hospital-letter {
+  display: flex;
+  flex-direction: column;
+  width: 210mm;
+  max-width: 210mm;
+  min-height: 297mm;
+  margin: 0 auto;
+  padding: 12mm 16mm 10mm;
+  font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 11pt;
+  color: $rx-navy;
+  background: $rx-white;
+  box-sizing: border-box;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* Main content grows; footer stays at bottom of A4 */
+.rx-letter-main {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* ─── Header ─── */
+.rx-letter-header {
+  text-align: center;
+  margin-bottom: 5mm;
+}
+
+.rx-letter-logo {
+  display: block;
+  width: auto;
+  max-width: 170mm;
+  height: auto;
+  max-height: 32mm;
+  margin: 0 auto;
+  object-fit: contain;
+}
+
+.rx-header-rule {
+  height: 4px;
+  margin-top: 4mm;
+  background: $rx-navy;
+  border-radius: 1px;
+}
+
+/* ─── Title ─── */
+.rx-title-block {
+  text-align: center;
+  margin-bottom: 7mm;
+}
+
+.rx-letter-title {
+  margin: 0 0 3mm;
+  font-size: 24pt;
+  font-weight: 800;
+  letter-spacing: 3px;
+  color: $rx-navy;
+  line-height: 1.15;
+}
+
+.rx-title-ornament {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 3mm;
+  max-width: 92%;
+  margin: 0 auto;
+}
+
+.rx-title-line {
+  flex: 1;
+  height: 2px;
+  background: $rx-navy;
+  max-width: 42%;
+}
+
+.rx-title-diamond {
+  color: $rx-navy;
+  font-size: 9pt;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+/* ─── Patient box ─── */
+.rx-patient-box {
+  border: 2px solid $rx-border;
+  border-radius: 14px;
+  background: $rx-white;
+  padding: 5mm 7mm 6mm;
+  margin-bottom: 7mm;
+}
+
+.rx-patient-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4mm 8mm;
+}
+
+.rx-field {
+  display: flex;
+  align-items: center;
+  gap: 2mm;
+  min-width: 0;
+  font-size: 10.5pt;
+}
+
+.rx-field-span {
+  grid-column: 1 / -1;
+}
+
+.rx-label {
+  font-weight: 700;
+  color: $rx-navy;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.rx-value {
+  flex: 1;
+  min-width: 0;
+  padding: 1.5mm 3mm;
+  background: $rx-fill;
+  border-bottom: 1px solid $rx-border;
+  border-radius: 2px 2px 0 0;
+  color: $rx-navy;
+  font-weight: 500;
+}
+
+/* ─── Medicine table ─── */
+.rx-meds-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 6mm;
+  table-layout: fixed;
+  font-size: 10pt;
+
+  th {
+    background: $rx-teal;
+    color: $rx-white;
+    font-weight: 700;
+    padding: 3mm 2mm;
+    border: 1px solid $rx-navy;
+    text-align: center;
+    font-size: 9.5pt;
+    letter-spacing: 0.3px;
+  }
+
+  th:nth-child(1) {
+    width: 26%;
+  }
+  th:nth-child(2) {
+    width: 14%;
+  }
+  th:nth-child(3) {
+    width: 16%;
+  }
+  th:nth-child(4) {
+    width: 14%;
+  }
+  th:nth-child(5) {
+    width: 30%;
+  }
+
+  td {
+    border: 1px solid $rx-border;
+    padding: 3.5mm 2.5mm;
+    min-height: 9mm;
+    height: 9mm;
+    vertical-align: middle;
+    color: $rx-navy;
+    background: $rx-white;
+    word-wrap: break-word;
+  }
+
+  tbody tr:nth-child(even) td {
+    background: #f7fafc;
+  }
+}
+
+.rx-lab-table {
+  th:nth-child(1),
+  .rx-col-num {
+    width: 10%;
+  }
+  th:nth-child(2) {
+    width: 90%;
+  }
+}
+
+.rx-lab-result-table {
+  th:nth-child(1) {
+    width: 6%;
+  }
+  th:nth-child(2) {
+    width: 24%;
+  }
+  th:nth-child(3) {
+    width: 22%;
+  }
+  th:nth-child(4) {
+    width: 22%;
+  }
+  th:nth-child(5) {
+    width: 26%;
+  }
+}
+
+.rx-surgery-details {
+  border: 2px solid $rx-border;
+  border-radius: 14px;
+  padding: 5mm 7mm 6mm;
+  margin-bottom: 7mm;
+  font-size: 10.5pt;
+}
+
+/* ─── Follow-up ─── */
+.rx-followup {
+  display: flex;
+  align-items: center;
+  gap: 4mm;
+  padding: 4mm 3mm;
+  margin-bottom: 10mm;
+  border-top: 1px solid $rx-border;
+  border-bottom: 1px solid $rx-border;
+}
+
+.rx-followup-icon {
+  width: 13mm;
+  height: 13mm;
+  border-radius: 50%;
+  background: $rx-teal;
+  color: $rx-white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.rx-followup-svg {
+  width: 7mm;
+  height: 7mm;
+}
+
+.rx-followup-text {
+  margin: 0;
+  font-weight: 700;
+  font-size: 12pt;
+  color: $rx-navy;
+  line-height: 1.35;
+}
+
+/* ─── Footer (pinned to bottom of letter) ─── */
+.rx-footer-wrap {
+  margin-top: auto;
+  flex-shrink: 0;
+  width: 100%;
+  padding-top: 10mm;
+}
+
+.rx-footer-rule {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba($rx-navy, 0.15) 8%,
+    rgba($rx-navy, 0.55) 50%,
+    rgba($rx-navy, 0.15) 92%,
+    transparent 100%
+  );
+  margin-bottom: 4mm;
+}
+
+.rx-letter-footer {
+  text-align: center;
+  padding: 0 4mm 2mm;
+  color: $rx-navy;
+}
+
+.rx-footer-hospital {
+  margin: 0 0 1mm;
+  font-size: 10pt;
+  font-weight: 700;
+  letter-spacing: 0.6px;
+  text-transform: uppercase;
+  color: $rx-navy;
+}
+
+.rx-footer-tagline {
+  margin: 0 0 3mm;
+  font-size: 8pt;
+  font-weight: 500;
+  letter-spacing: 0.4px;
+  color: rgba($rx-navy, 0.72);
+  font-style: italic;
+}
+
+.rx-footer-contact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 1.5mm 2mm;
+  font-size: 7.5pt;
+  line-height: 1.45;
+  color: rgba($rx-navy, 0.88);
+}
+
+.rx-footer-line {
+  white-space: nowrap;
+
+  strong {
+    font-weight: 600;
+    color: $rx-navy;
+    margin-right: 1mm;
+  }
+}
+
+.rx-footer-dot {
+  color: rgba($rx-navy, 0.35);
+  font-size: 6pt;
+  line-height: 1;
+  user-select: none;
+}
+
+/* ─── Modal preview ─── */
+.a4-prescription-print-modal .modal-body,
+.a4-hospital-print-modal .modal-body {
+  background: #dde4ec !important;
+}
+
+.a4-prescription-print-dialog,
+.a4-hospital-print-dialog {
+  max-width: 220mm;
+}
+
+/* ─── Patient history A4 ─── */
+.patient-history-a4 {
+  font-size: 11px;
+  color: $rx-navy;
+}
+
+.patient-history-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding-bottom: 10px;
+  border-bottom: 2px solid rgba($rx-navy, 0.15);
+}
+
+.patient-history-logo {
+  width: 52px;
+  height: 52px;
+  object-fit: contain;
+}
+
+.patient-history-title {
+  font-size: 18px;
+  font-weight: 700;
+  margin: 0;
+  color: $rx-navy;
+}
+
+.patient-history-subtitle {
+  margin: 0;
+  font-size: 12px;
+  color: rgba($rx-navy, 0.7);
+}
+
+.patient-history-patient-box {
+  background: $rx-fill;
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+
+  p {
+    margin-bottom: 4px;
+  }
+}
+
+.patient-history-summary .summary-box {
+  background: $rx-fill;
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+
+  span {
+    font-size: 10px;
+    color: rgba($rx-navy, 0.65);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  strong {
+    font-size: 15px;
+    color: $rx-navy;
+  }
+
+  &.summary-debt strong {
+    color: #b45309;
+  }
+
+  &.summary-clear strong {
+    color: #15803d;
+  }
+}
+
+.patient-history-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 14px;
+  font-size: 10px;
+
+  th,
+  td {
+    border: 1px solid rgba($rx-navy, 0.12);
+    padding: 6px 8px;
+    vertical-align: top;
+  }
+
+  th {
+    background: $rx-teal;
+    color: $rx-white;
+    font-weight: 600;
+    text-align: left;
+  }
+}
+
+.patient-history-debt-note {
+  font-size: 10px;
+  color: #b45309;
+  border-left: 3px solid #f59e0b;
+  padding: 8px 10px;
+  background: #fffbeb;
+  margin-bottom: 12px;
+}
+
+/* ─── Print ─── */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 8mm;
+  }
+
+  html,
+  body {
+    width: 210mm;
+    height: auto;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: $rx-white !important;
+  }
+
+  body * {
+    visibility: hidden !important;
+  }
+
+  .a4-prescription-print-modal,
+  .a4-hospital-print-modal,
+  .a4-prescription-print-modal .modal-dialog,
+  .a4-hospital-print-modal .modal-dialog,
+  .a4-prescription-print-modal .modal-content,
+  .a4-hospital-print-modal .modal-content,
+  .a4-prescription-print-modal .modal-body,
+  .a4-hospital-print-modal .modal-body,
+  .prescription-letter-a4,
+  .prescription-letter-a4 *,
+  .a4-hospital-letter,
+  .a4-hospital-letter * {
+    visibility: visible !important;
+  }
+
+  .modal-backdrop,
+  .no-print {
+    display: none !important;
+    visibility: hidden !important;
+  }
+
+  .a4-prescription-print-modal,
+  .a4-hospital-print-modal {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    height: auto !important;
+    z-index: 99999 !important;
+    display: block !important;
+    overflow: visible !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: $rx-white !important;
+  }
+
+  .a4-prescription-print-modal .modal-dialog,
+  .a4-hospital-print-modal .modal-dialog {
+    max-width: none !important;
+    width: 100% !important;
+    margin: 0 !important;
+    transform: none !important;
+  }
+
+  .a4-prescription-print-modal .modal-content,
+  .a4-hospital-print-modal .modal-content,
+  .a4-prescription-print-modal .modal-body,
+  .a4-hospital-print-modal .modal-body {
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: $rx-white !important;
+    overflow: visible !important;
+  }
+
+  .a4-prescription-print-modal .modal-header,
+  .a4-hospital-print-modal .modal-header,
+  .a4-prescription-print-modal .modal-footer,
+  .a4-hospital-print-modal .modal-footer {
+    display: none !important;
+  }
+
+  .prescription-letter-a4,
+  .a4-hospital-letter {
+    display: flex !important;
+    flex-direction: column !important;
+    position: relative !important;
+    left: auto !important;
+    top: auto !important;
+    width: 210mm !important;
+    max-width: 210mm !important;
+    min-height: 281mm !important;
+    margin: 0 auto !important;
+    padding: 10mm 14mm !important;
+    page-break-after: avoid;
+    page-break-inside: avoid;
+  }
+
+  .rx-letter-main {
+    flex: 1 1 auto !important;
+    display: flex !important;
+    flex-direction: column !important;
+  }
+
+  .rx-footer-wrap {
+    margin-top: auto !important;
+    flex-shrink: 0 !important;
+  }
+
+  .rx-meds-table th {
+    background: $rx-teal !important;
+    color: $rx-white !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .rx-followup-icon {
+    background: $rx-teal !important;
+    color: $rx-white !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .rx-value {
+    background: $rx-fill !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .rx-header-rule,
+  .rx-footer-rule {
+    background: rgba($rx-navy, 0.55) !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+}

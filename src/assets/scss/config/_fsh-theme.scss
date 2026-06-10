@@ -1,0 +1,149 @@
+@import "brand";
+
+:root {
+  --fsh-blue: #{$fsh-blue};
+  --fsh-red: #{$fsh-red};
+  --fsh-teal: #{$fsh-teal};
+  --fsh-navy: #{$fsh-navy};
+  --fsh-black: #{$fsh-black};
+  --#{$prefix}logo-lg-height: 44px;
+  --#{$prefix}logo-sm-height: 36px;
+}
+
+/* FSH brand — dark sidebar & topbar */
+html[data-menu-color="dark"] {
+  --#{$prefix}main-nav-bg: #{$fsh-navy};
+  --#{$prefix}main-nav-item-color: rgba(255, 255, 255, 0.72);
+  --#{$prefix}main-nav-item-hover-bg: rgba(0, 169, 206, 0.12);
+  --#{$prefix}main-nav-item-hover-color: #{$white};
+  --#{$prefix}main-nav-border-color: rgba(0, 169, 206, 0.25);
+}
+
+html[data-topbar-color="dark"] {
+  --#{$prefix}topbar-bg: #{$fsh-navy};
+  --#{$prefix}topbar-item-color: rgba(255, 255, 255, 0.75);
+  --#{$prefix}topbar-search-bg: rgba(255, 255, 255, 0.08);
+}
+
+html[data-bs-theme="dark"][data-menu-color="dark"],
+html[data-bs-theme="dark"][data-menu-color="light"] {
+  --#{$prefix}main-nav-bg: #{$fsh-black};
+  --#{$prefix}main-nav-item-hover-bg: rgba(0, 169, 206, 0.15);
+  --#{$prefix}main-nav-border-color: rgba(0, 169, 206, 0.2);
+}
+
+html[data-bs-theme="dark"][data-topbar-color="dark"],
+html[data-bs-theme="dark"][data-topbar-color="light"] {
+  --#{$prefix}topbar-bg: #{$fsh-black};
+}
+
+/* Active sidebar item — brand gradient accent */
+.main-nav {
+  .navbar-nav .nav-item .nav-link.active,
+  .navbar-nav .nav-item .nav-link:hover {
+    color: var(--#{$prefix}main-nav-item-hover-color);
+  }
+
+  .navbar-nav .nav-item .nav-link.active {
+    background: linear-gradient(90deg, rgba(0, 51, 153, 0.35) 0%, rgba(0, 169, 206, 0.2) 100%);
+    border-left: 3px solid #{$fsh-teal};
+  }
+}
+
+.logo-box {
+  line-height: normal;
+  padding: 28px 16px 20px;
+
+  .fsh-logo {
+    display: block;
+    margin: 0 auto;
+    object-fit: contain;
+  }
+
+  .fsh-logo-horizontal {
+    width: auto;
+    max-width: calc(100% - 8px);
+    height: var(--#{$prefix}logo-lg-height);
+    max-height: 52px;
+  }
+
+  .fsh-logo-short {
+    height: var(--#{$prefix}logo-sm-height);
+    width: var(--#{$prefix}logo-sm-height);
+  }
+
+  /* Expanded sidebar — horizontal logo only */
+  .logo-sm.fsh-logo-short {
+    display: none;
+  }
+}
+
+/* Condensed / collapsed sidebar — short logo only */
+html[data-menu-size='condensed'] .main-nav .logo-box,
+html[data-menu-size='sm-hover'] .main-nav:not(:hover) .logo-box {
+  .logo-sm.fsh-logo-short {
+    display: block;
+  }
+
+  .logo-lg.fsh-logo-horizontal {
+    display: none !important;
+  }
+}
+
+.auth-logo .fsh-logo-horizontal {
+  max-height: 120px;
+  width: auto;
+}
+
+.topbar {
+  border-bottom: 2px solid transparent;
+  border-image: linear-gradient(90deg, #{$fsh-blue} 0%, #{$fsh-teal} 100%) 1;
+}
+
+.btn-primary {
+  --#{$prefix}btn-bg: #{$fsh-blue};
+  --#{$prefix}btn-border-color: #{$fsh-blue};
+  --#{$prefix}btn-hover-bg: #{darken($fsh-blue, 8%)};
+  --#{$prefix}btn-hover-border-color: #{darken($fsh-blue, 8%)};
+  --#{$prefix}btn-active-bg: #{darken($fsh-blue, 12%)};
+  --#{$prefix}btn-active-border-color: #{darken($fsh-blue, 12%)};
+}
+
+.btn-success {
+  --#{$prefix}btn-bg: #{$fsh-teal};
+  --#{$prefix}btn-border-color: #{$fsh-teal};
+  --#{$prefix}btn-hover-bg: #{darken($fsh-teal, 8%)};
+  --#{$prefix}btn-hover-border-color: #{darken($fsh-teal, 8%)};
+}
+
+.badge-soft-primary {
+  color: #{$fsh-blue};
+  background-color: rgba(0, 51, 153, 0.12);
+}
+
+.badge-soft-danger {
+  color: #{$fsh-red};
+  background-color: rgba(227, 6, 19, 0.12);
+}
+
+.badge-soft-success {
+  color: #{$fsh-teal};
+  background-color: rgba(0, 169, 206, 0.12);
+}
+
+.text-primary {
+  color: #{$fsh-blue} !important;
+}
+
+.bg-primary {
+  background-color: #{$fsh-blue} !important;
+}
+
+.authentication-bg {
+  background: linear-gradient(135deg, #{$fsh-navy} 0%, #{$fsh-black} 50%, #{darken($fsh-blue, 5%)} 100%);
+}
+
+.auth-card {
+  border-top: 3px solid transparent;
+  border-image: linear-gradient(90deg, #{$fsh-blue}, #{$fsh-red}, #{$fsh-teal}) 1;
+}
