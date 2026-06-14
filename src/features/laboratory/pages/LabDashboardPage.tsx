@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import { Row } from 'react-bootstrap'
 
 import PageMetaData from '@/components/PageTitle'
@@ -9,11 +9,7 @@ import StatCard from '@/shared/components/StatCard'
 import { getLabVisibleRequests, labRequests as storeLabRequests } from '@/shared/services/hmsStore'
 
 const LabDashboardPage = () => {
-  const { dataVersion, isSupabase, isReady, reload } = useHmsStoreContext()
-
-  useEffect(() => {
-    if (isSupabase && isReady) void reload()
-  }, [isSupabase, isReady, reload])
+  const { dataVersion } = useHmsStoreContext()
 
   const stats = useMemo(() => {
     const visible = getLabVisibleRequests()

@@ -10,6 +10,7 @@ import type { EmergencyCase, EmergencySeverity, Gender, Patient } from '@/shared
 import { useHmsStoreContext } from '@/context/HmsStoreContext'
 import {
   emergencyCases,
+  clearPatientDataResetFlag,
   generateId,
   generateNumber,
   patients,
@@ -46,6 +47,7 @@ const EmergencyCaseCreatePage = () => {
       let patientId = form.patientId
 
       if (patientMode === 'new') {
+        clearPatientDataResetFlag()
         const newPatient: Patient = {
           id: generateId('pat'),
           fullName: form.fullName.trim(),

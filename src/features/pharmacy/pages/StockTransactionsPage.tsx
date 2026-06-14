@@ -213,6 +213,7 @@ const StockTransactionsPage = () => {
         type: 'Dispense',
         quantity: line.quantity,
         unitPrice: line.unitPrice,
+        unitCost: item.purchasePrice ?? 0,
         reference: ref,
         notes: note,
         createdAt: new Date().toISOString(),

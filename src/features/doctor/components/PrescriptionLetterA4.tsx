@@ -1,5 +1,4 @@
-import { THERMAL_LOGO_SRC } from '@/shared/constants/branding'
-import A4LetterFooter from '@/features/doctor/components/a4/A4LetterFooter'
+import PrintDocumentHeader from '@/shared/components/PrintDocumentHeader'
 import type { PrescriptionItem } from '@/shared/types'
 
 export type PrescriptionLetterData = {
@@ -36,10 +35,7 @@ const PrescriptionLetterA4 = ({ data }: PrescriptionLetterA4Props) => {
   return (
     <div className="prescription-letter-a4">
       <div className="rx-letter-main">
-      <header className="rx-letter-header">
-        <img src={THERMAL_LOGO_SRC} alt="Faaruuq Specialist Hospital" className="rx-letter-logo" />
-        <div className="rx-header-rule" aria-hidden />
-      </header>
+      <PrintDocumentHeader variant="a4" />
 
       <div className="rx-title-block">
         <h1 className="rx-letter-title">PRESCRIPTION LETTER</h1>
@@ -105,8 +101,6 @@ const PrescriptionLetterA4 = ({ data }: PrescriptionLetterA4Props) => {
         <p className="rx-followup-text">{followUp}</p>
       </div>
       </div>
-
-      <A4LetterFooter />
     </div>
   )
 }

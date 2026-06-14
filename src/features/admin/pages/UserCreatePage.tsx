@@ -18,6 +18,8 @@ import {
 } from '@/shared/services/passwordUtils'
 import { ROLE_LABELS, USER_ROLES, type UserRole } from '@/shared/types/roles'
 
+const MANAGED_ROLES = USER_ROLES.filter((r) => r !== 'admin' && r !== 'emergency')
+
 const splitFullName = (fullName: string) => {
   const parts = fullName.trim().split(/\s+/)
   if (parts.length === 0) return { firstName: '', lastName: '' }
@@ -40,6 +42,15 @@ const UserCreatePage = () => {
     setError('')
 
     const trimmedUsername = username.trim().toLowerCase()
+    const trimmedFullName = fullName.trim()
+    if (!trimmedFullName) {
+      setError('Full name is required.')
+      return
+    }
+    if (!trimmedUsername) {
+      setError('Username is required.')
+      return
+    }
     const email = staffEmailFromUsername(trimmedUsername)
     const passwordError = validatePasswordStrength(password)
     if (passwordError) {
@@ -53,7 +64,8 @@ const UserCreatePage = () => {
 
     setSaving(true)
     try {
-      const { firstName, lastName } = splitFullName(fullName)
+      const { firstName, lastName } = splitFullName(trimmedFullName)
+      const now = new Date().toISOString()
       const newUser = {
         id: generateId('staff'),
         username: trimmedUsername,
@@ -63,7 +75,8 @@ const UserCreatePage = () => {
         role,
         password: await hashPassword(password),
         isActive,
-        createdAt: new Date().toISOString().split('T')[0],
+        createdAt: now.split('T')[0],
+        lastModifiedAt: now,
       }
       staffUsers.push(newUser)
       try {
@@ -75,7 +88,9 @@ const UserCreatePage = () => {
         setError(`User could not be saved to the database: ${detail}`)
         return
       }
-      navigate(`/hms/administration/users/${newUser.id}`)
+      navigate('/hms/administration/users', {
+        state: { message: `User "${newUser.username}" created successfully.` },
+      })
     } catch {
       setError('Could not create user. Please try again.')
     } finally {
@@ -115,7 +130,7 @@ const UserCreatePage = () => {
                 <Form.Group className="mb-3">
                   <Form.Label>Role</Form.Label>
                   <Form.Select value={role} onChange={(e) => setRole(e.target.value as UserRole)}>
-                    {USER_ROLES.filter((r) => r !== 'admin').map((r) => (
+                    {MANAGED_ROLES.map((r) => (
                       <option key={r} value={r}>
                         {ROLE_LABELS[r]}
                       </option>

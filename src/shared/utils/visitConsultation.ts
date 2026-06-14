@@ -302,28 +302,63 @@ export function canDoctorReleasePatient(visitId: string): { ok: boolean; error?:
   if (['Completed', 'Cancelled'].includes(visit.status)) {
     return { ok: false, error: 'Patient already released.' }
   }
+  return { ok: true }
+}
 
-  const blockers = getReleaseBlockers(visitId)
-  if (blockers.length === 0) return { ok: true }
+/** Cancel open lab / surgery / pending admission orders when doctor releases patient */
+export function isVisitReleasedOrMissing(visitId: string): boolean {
+  const visit = getVisitById(visitId)
+  return !visit || ['Completed', 'Cancelled'].includes(visit.status)
+}
 
-  const mustCancel = blockers.filter((b) => b.canCancel)
-  const cannotCancel = blockers.filter((b) => !b.canCancel)
+/** Reception Lab Fees — hide cancelled orders and orders for released visits */
+export function isReceptionLabFeeVisible(lab: LabRequest): boolean {
+  if (lab.status === 'Cancelled') return false
+  if (isVisitReleasedOrMissing(lab.visitId)) return false
+  return true
+}
 
-  if (mustCancel.length > 0) {
-    const types = [...new Set(mustCancel.map((b) => b.type))]
-    const labels = types.map((t) =>
-      t === 'lab' ? 'Lab' : t === 'surgery' ? 'Surgery' : 'In-patient',
-    )
-    return {
-      ok: false,
-      error: `Cancel open ${labels.join(', ')} order(s) before releasing the patient.`,
-    }
+/** Reception Surgery — hide cancelled orders and orders for released visits */
+export function isReceptionSurgeryVisible(req: SurgeryRequest): boolean {
+  if (req.status === 'Cancelled') return false
+  if (isVisitReleasedOrMissing(req.visitId)) return false
+  return true
+}
+
+/** Reception In-Patient Request — hide cancelled/rejected and orders for released visits */
+export function isReceptionAdmissionVisible(req: AdmissionRequest): boolean {
+  if (req.status === 'Cancelled' || req.status === 'Rejected') return false
+  if (isVisitReleasedOrMissing(req.visitId)) return false
+  return req.status === 'Pending' || req.status === 'Assigned'
+}
+
+export function cancelOpenOrdersForVisitRelease(visitId: string): void {
+  const ts = new Date().toISOString()
+
+  for (const lab of labRequests) {
+    if (lab.visitId !== visitId) continue
+    if (lab.status === 'Completed' || lab.status === 'Cancelled') continue
+    lab.status = 'Cancelled'
+    lab.cancelledAt = ts
+    lab.lastModifiedAt = ts
   }
 
-  return {
-    ok: false,
-    error: `Cannot release — ${cannotCancel.map((b) => b.label).join('; ')}. Complete care or contact reception first.`,
+  for (const surgery of surgeryRequests) {
+    if (surgery.visitId !== visitId) continue
+    if (surgery.status === 'Completed' || surgery.status === 'Cancelled') continue
+    surgery.status = 'Cancelled'
+    surgery.lastModifiedAt = ts
   }
+
+  for (const admission of admissionRequests) {
+    if (admission.visitId !== visitId) continue
+    if (['Cancelled', 'Rejected', 'Assigned'].includes(admission.status)) continue
+    admission.status = 'Cancelled'
+    admission.lastModifiedAt = ts
+  }
+
+  refreshVisitWorkflow(visitId)
+  touchHmsStore()
 }
 
 /** Not yet seen by doctor (still in queue) */
@@ -369,6 +404,15 @@ export function getDoctorQueuePatientStatus(
   if (['Completed', 'Cancelled'].includes(visit.status)) return 'Inactive'
   if (patient?.status === 'Inactive') return 'Inactive'
   return getPatientCareDisplayStatus(visit)
+}
+
+/** Active queue filter — waiting or currently in doctor care (not released) */
+export function isDoctorQueuePatientActive(
+  visit: Visit,
+  patient?: Pick<Patient, 'status'>,
+): boolean {
+  const status = getDoctorQueuePatientStatus(visit, patient)
+  return status === 'Active' || status === 'Waiting'
 }
 
 export function getPatientCareDisplayStatusFromPatient(
@@ -491,6 +535,8 @@ export function finishVisit(visitId: string): boolean {
 export function confirmDoctorPatientRelease(visitId: string): { ok: boolean; error?: string } {
   const releaseCheck = canDoctorReleasePatient(visitId)
   if (!releaseCheck.ok) return releaseCheck
+
+  cancelOpenOrdersForVisitRelease(visitId)
 
   const visit = getVisitById(visitId)
   if (!visit) return { ok: false, error: 'Visit not found.' }

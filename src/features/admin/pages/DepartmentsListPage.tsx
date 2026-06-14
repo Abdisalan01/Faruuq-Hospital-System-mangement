@@ -6,9 +6,21 @@ import IconifyIcon from '@/components/wrappers/IconifyIcon'
 import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
 import StatusBadge from '@/shared/components/StatusBadge'
+import TablePagination from '@/shared/components/TablePagination'
+import { useTablePagination } from '@/shared/hooks/useTablePagination'
 import { departments } from '@/shared/services/hmsStore'
 
 const DepartmentsListPage = () => {
+  const {
+    pageItems,
+    setPage,
+    safePage,
+    totalPages,
+    rangeStart,
+    rangeEnd,
+    totalItems,
+  } = useTablePagination(departments, 10, [departments.length])
+
   return (
     <PermissionGuard permissions={['department_management']}>
       <PageMetaData title="Departments" />
@@ -36,7 +48,7 @@ const DepartmentsListPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {departments.map((dept) => (
+                {pageItems.map((dept) => (
                   <tr key={dept.id}>
                     <td>
                       <Link to={`/hms/administration/departments/${dept.id}`} className="fw-medium">
@@ -63,6 +75,15 @@ const DepartmentsListPage = () => {
               </tbody>
             </Table>
           </div>
+          <TablePagination
+            className="pt-3 border-top mt-3"
+            totalItems={totalItems}
+            rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
+            safePage={safePage}
+            totalPages={totalPages}
+            onPageChange={setPage}
+          />
         </CardBody>
       </Card>
     </PermissionGuard>

@@ -12,6 +12,7 @@ import {
   saveDoctorConsultationSnapshotToSupabase as persistDoctorConsultationToTables,
   saveLabFeePaymentSnapshotToSupabase as persistLabFeePaymentToTables,
   saveLabRequestSnapshotToSupabase as persistLabRequestToTables,
+  savePatientReleaseSnapshotToSupabase as persistPatientReleaseToTables,
   saveInpatientPaymentSnapshotToSupabase as persistInpatientPaymentToTables,
   savePatientDiscountSnapshotToSupabase as persistPatientDiscountToTables,
   saveSurgeryFeePaymentSnapshotToSupabase as persistSurgeryFeePaymentToTables,
@@ -28,6 +29,8 @@ import {
   saveCreditPaymentSnapshotToSupabase as persistCreditPaymentToTables,
   saveSupplyRequestSnapshotToSupabase as persistSupplyRequestToTables,
   saveFullMirrorSnapshotToSupabase as persistFullMirrorToTables,
+  saveObstetricDeliverySnapshotToSupabase as persistObstetricDeliveryToTables,
+  saveDoctorCommissionPayoutSnapshotToSupabase as persistDoctorCommissionPayoutToTables,
 } from './hmsSupabaseTables'
 
 export function isSupabaseBackendEnabled(): boolean {
@@ -143,6 +146,15 @@ export async function saveLabRequestSnapshotToSupabase(
   return persistLabRequestToTables(snapshot, labRequestId)
 }
 
+/** Fast path when doctor releases patient — cancels open orders + completes visit */
+export async function savePatientReleaseSnapshotToSupabase(
+  snapshot: HmsStoreSnapshot,
+  visitId: string,
+): Promise<string> {
+  if (!isSupabaseConfigured) throw new Error('Supabase is not configured')
+  return persistPatientReleaseToTables(snapshot, visitId)
+}
+
 /** Fast path for reception surgery fee payment collection */
 export async function saveSurgeryFeePaymentSnapshotToSupabase(snapshot: HmsStoreSnapshot): Promise<string> {
   if (!isSupabaseConfigured) throw new Error('Supabase is not configured')
@@ -196,6 +208,20 @@ export async function saveCreditPaymentSnapshotToSupabase(snapshot: HmsStoreSnap
 export async function saveSupplyRequestSnapshotToSupabase(snapshot: HmsStoreSnapshot): Promise<string> {
   if (!isSupabaseConfigured) throw new Error('Supabase is not configured')
   return persistSupplyRequestToTables(snapshot)
+}
+
+export async function saveObstetricDeliverySnapshotToSupabase(
+  snapshot: HmsStoreSnapshot,
+): Promise<string> {
+  if (!isSupabaseConfigured) throw new Error('Supabase is not configured')
+  return persistObstetricDeliveryToTables(snapshot)
+}
+
+export async function saveDoctorCommissionPayoutSnapshotToSupabase(
+  snapshot: HmsStoreSnapshot,
+): Promise<string> {
+  if (!isSupabaseConfigured) throw new Error('Supabase is not configured')
+  return persistDoctorCommissionPayoutToTables(snapshot)
 }
 
 export async function saveFullMirrorSnapshotToSupabase(snapshot: HmsStoreSnapshot): Promise<string> {

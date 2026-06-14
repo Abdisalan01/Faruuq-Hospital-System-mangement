@@ -1,7 +1,6 @@
 import { currency } from '@/context/constants'
-import { THERMAL_LOGO_SRC } from '@/shared/constants/branding'
-import A4LetterFooter from '@/features/doctor/components/a4/A4LetterFooter'
-import { getPatientById, systemSettings } from '@/shared/services/hmsStore'
+import PrintDocumentHeader from '@/shared/components/PrintDocumentHeader'
+import { getPatientById } from '@/shared/services/hmsStore'
 import type { PatientHistorySummary } from '@/shared/types'
 
 type PrintablePatientHistoryProps = {
@@ -22,13 +21,8 @@ const PrintablePatientHistory = ({ history }: PrintablePatientHistoryProps) => {
 
   return (
     <div className="a4-hospital-letter patient-history-a4">
-      <header className="patient-history-header">
-        <img src={THERMAL_LOGO_SRC} alt="" className="patient-history-logo" />
-        <div>
-          <h1 className="patient-history-title">{systemSettings.hospitalName}</h1>
-          <p className="patient-history-subtitle">Patient Transaction History</p>
-        </div>
-      </header>
+      <PrintDocumentHeader variant="a4" />
+      <p className="patient-history-doc-title">Patient Transaction History</p>
 
       <section className="patient-history-patient-box">
         <div className="row g-2">
@@ -131,7 +125,6 @@ const PrintablePatientHistory = ({ history }: PrintablePatientHistoryProps) => {
         </p>
       )}
 
-      <A4LetterFooter />
     </div>
   )
 }

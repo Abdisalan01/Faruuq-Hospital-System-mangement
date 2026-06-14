@@ -1,6 +1,5 @@
 -- FSH Hospital HMS — initial Supabase schema
 -- Run in Supabase Dashboard → SQL Editor (or via Supabase CLI)
-
 -- Single-row JSON store (mirrors frontend hmsStore snapshot)
 CREATE TABLE IF NOT EXISTS public.hms_snapshots (
   id text PRIMARY KEY DEFAULT 'main',

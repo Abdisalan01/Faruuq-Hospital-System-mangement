@@ -14,6 +14,7 @@ import PatientRegistrationSlip, {
 import AutoPatientNumberDisplay from '@/features/reception/components/AutoPatientNumberDisplay'
 import {
   clampDiscountPercent,
+  clearPatientDataResetFlag,
   departments,
   generateId,
   generateNumber,
@@ -119,6 +120,9 @@ const ReceptionRegisterPage = () => {
       const departmentId = emergency ? emergencyDept : staff.departmentId ?? departments[0]?.id ?? 'dept-001'
       const doctorName = emergency ? 'Emergency' : `Dr. ${staff.firstName} ${staff.lastName}`
       const visitDate = todayIsoLocal()
+      const savedAt = new Date().toISOString()
+
+      clearPatientDataResetFlag()
 
       patients.push({
         id: patientId,
@@ -130,10 +134,10 @@ const ReceptionRegisterPage = () => {
         paymentType: 'cash',
         status: 'Active',
         createdAt: visitDate,
+        lastModifiedAt: savedAt,
       })
 
       const visitId = generateId('vis')
-      const createdAt = new Date().toISOString()
       visits.push({
         id: visitId,
         visitNumber: generateNumber('V'),
@@ -145,8 +149,8 @@ const ReceptionRegisterPage = () => {
         queueNumber: patientNumber,
         patientNumber,
         isEmergency: emergency,
-        createdAt,
-        lastModifiedAt: createdAt,
+        createdAt: savedAt,
+        lastModifiedAt: savedAt,
       })
 
       onNewVisitCreated(patientId)

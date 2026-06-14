@@ -40,8 +40,8 @@ const HMSDashboardPage = () => {
         <StatCard title="Active Visits" value={stats.todayVisits - stats.waitingPatients} icon="solar:clipboard-list-broken" variant="success" link="/hms/administration/operational-reports" />
         <StatCard title="Waiting Patients" value={stats.waitingPatients} icon="solar:clock-circle-broken" variant="warning" link="/hms/administration/operational-reports" />
         <StatCard title="Admitted Patients" value={stats.admittedPatients} icon="solar:bed-broken" variant="info" link="/hms/administration/operational-reports" />
-        <StatCard title="Today's Revenue" value={`${currency}${stats.todayRevenue}`} icon="solar:dollar-minimalistic-broken" variant="success" link="/hms/accounting/financial-reports" />
-        <StatCard title="Outstanding Balances" value={`${currency}${stats.totalOutstanding}`} icon="solar:wallet-broken" variant="danger" link="/hms/accounting/financial-reports" />
+        <StatCard title="Today's Revenue" value={`${currency}${stats.todayRevenue}`} icon="solar:dollar-minimalistic-broken" variant="success" link="/hms/accounting/revenue" />
+        <StatCard title="Outstanding Balances" value={`${currency}${stats.totalOutstanding}`} icon="solar:wallet-broken" variant="danger" link="/hms/accounting/receivables" />
         <StatCard title="Lab Requests" value={stats.pendingLabRequests} icon="solar:test-tube-broken" variant="primary" link="/hms/administration/operational-reports" />
         <StatCard title="Pharmacy Sales" value={stats.pendingPrescriptions} icon="solar:pill-broken" variant="secondary" link="/hms/administration/operational-reports" />
       </Row>

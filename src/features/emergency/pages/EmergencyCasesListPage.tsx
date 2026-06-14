@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import PageMetaData from '@/components/PageTitle'
 import { Card, CardBody, Table } from 'react-bootstrap'
 import { Link } from 'react-router-dom'
@@ -5,12 +6,28 @@ import { Link } from 'react-router-dom'
 import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
 import StatusBadge from '@/shared/components/StatusBadge'
+import TablePagination from '@/shared/components/TablePagination'
+import { useTablePagination } from '@/shared/hooks/useTablePagination'
 import { emergencyCases, getPatientById } from '@/shared/services/hmsStore'
 
 const EmergencyCasesListPage = () => {
-  const sortedCases = [...emergencyCases].sort(
-    (a, b) => new Date(b.arrivalTime).getTime() - new Date(a.arrivalTime).getTime(),
+  const sortedCases = useMemo(
+    () =>
+      [...emergencyCases].sort(
+        (a, b) => new Date(b.arrivalTime).getTime() - new Date(a.arrivalTime).getTime(),
+      ),
+    [emergencyCases.length],
   )
+
+  const {
+    pageItems,
+    setPage,
+    safePage,
+    totalPages,
+    rangeStart,
+    rangeEnd,
+    totalItems,
+  } = useTablePagination(sortedCases)
 
   return (
     <PermissionGuard permissions={['emergency_registration', 'triage']}>
@@ -44,14 +61,14 @@ const EmergencyCasesListPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {sortedCases.length === 0 ? (
+                {pageItems.length === 0 ? (
                   <tr>
                     <td colSpan={8} className="text-center text-muted py-4">
                       No emergency cases registered
                     </td>
                   </tr>
                 ) : (
-                  sortedCases.map((c) => {
+                  pageItems.map((c) => {
                     const patient = getPatientById(c.patientId)
                     return (
                       <tr key={c.id}>
@@ -85,6 +102,15 @@ const EmergencyCasesListPage = () => {
               </tbody>
             </Table>
           </div>
+          <TablePagination
+            className="pt-3 border-top mt-3"
+            totalItems={totalItems}
+            rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
+            safePage={safePage}
+            totalPages={totalPages}
+            onPageChange={setPage}
+          />
         </CardBody>
       </Card>
     </PermissionGuard>

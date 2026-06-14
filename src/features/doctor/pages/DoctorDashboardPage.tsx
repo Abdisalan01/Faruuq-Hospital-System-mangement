@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react'
+import { useMemo } from 'react'
 import { Row } from 'react-bootstrap'
 import { Link } from 'react-router-dom'
 
@@ -14,13 +14,9 @@ import { isVisitCompletedConsultation } from '@/shared/utils/visitConsultation'
 
 const DoctorDashboardPage = () => {
   const { user } = useAuthContext()
-  const { dataVersion, isReady, isSupabase, reload } = useHmsStoreContext()
+  const { dataVersion } = useHmsStoreContext()
 
   const doctorId = user?.id ?? getLoggedInStaffId()
-
-  useEffect(() => {
-    if (isSupabase && isReady) void reload()
-  }, [isSupabase, isReady, reload])
 
   const todayVisits = useMemo(
     () => (doctorId ? getVisitsForDoctorToday(doctorId) : []),

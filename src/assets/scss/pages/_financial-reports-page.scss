@@ -1,0 +1,238 @@
+.financial-reports-page {
+  .fin-reports-filter-card {
+    border: 0;
+    border-radius: 1rem;
+    background: linear-gradient(135deg, rgba(var(--bs-primary-rgb), 0.08) 0%, rgba(var(--bs-primary-rgb), 0.02) 100%);
+    box-shadow: 0 0.25rem 1rem rgba(15, 23, 42, 0.06);
+  }
+
+  .fin-reports-tab-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 1.25rem;
+    border-bottom: 0;
+  }
+
+  .fin-reports-tab-nav .nav-link {
+    border: 1px solid var(--bs-border-color);
+    border-radius: 999px;
+    padding: 0.5rem 1rem;
+    color: var(--bs-body-color);
+    background: var(--bs-body-bg);
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-weight: 500;
+    font-size: 0.875rem;
+  }
+
+  .fin-reports-tab-nav .nav-link.active {
+    background: rgb(var(--bs-primary-rgb));
+    border-color: rgb(var(--bs-primary-rgb));
+    color: #fff;
+  }
+
+  .fin-stat-card {
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.875rem;
+    height: 100%;
+    box-shadow: 0 0.125rem 0.5rem rgba(15, 23, 42, 0.04);
+    transition: box-shadow 0.15s ease;
+  }
+
+  .fin-stat-card:hover {
+    box-shadow: 0 0.25rem 0.75rem rgba(15, 23, 42, 0.08);
+  }
+
+  .fin-stat-card .fin-stat-icon {
+    width: 2.5rem;
+    height: 2.5rem;
+    border-radius: 0.625rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(var(--bs-primary-rgb), 0.12);
+    color: rgb(var(--bs-primary-rgb));
+    margin-bottom: 0.75rem;
+  }
+
+  .fin-stat-card.fin-stat-primary {
+    border-color: rgba(var(--bs-primary-rgb), 0.35);
+    background: rgba(var(--bs-primary-rgb), 0.04);
+  }
+
+  .fin-stat-card.fin-stat-success {
+    border-color: rgba(var(--bs-success-rgb), 0.35);
+    background: rgba(var(--bs-success-rgb), 0.04);
+  }
+
+  .fin-stat-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--bs-secondary-color);
+    margin-bottom: 0.25rem;
+  }
+
+  .fin-stat-value {
+    font-size: 1.35rem;
+    font-weight: 700;
+    margin-bottom: 0.15rem;
+  }
+
+  .fin-stat-meta {
+    font-size: 0.8125rem;
+    color: var(--bs-secondary-color);
+  }
+
+  .fin-section-card {
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.875rem;
+    box-shadow: 0 0.125rem 0.5rem rgba(15, 23, 42, 0.04);
+    overflow: hidden;
+  }
+
+  .fin-section-header {
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--bs-border-color);
+    background: rgba(var(--bs-light-rgb), 0.5);
+  }
+
+  .fin-section-title {
+    font-size: 1rem;
+    font-weight: 700;
+    margin: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .fin-section-hint {
+    font-size: 0.8125rem;
+    color: var(--bs-secondary-color);
+    margin: 0.25rem 0 0;
+  }
+
+  .fin-table {
+    margin-bottom: 0;
+    font-size: 0.875rem;
+  }
+
+  .fin-table thead th {
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--bs-secondary-color);
+    font-weight: 600;
+    white-space: nowrap;
+    background: rgba(var(--bs-light-rgb), 0.65);
+    border-bottom-width: 1px;
+  }
+
+  .fin-table tbody td {
+    vertical-align: middle;
+  }
+
+  .fin-amount-cell {
+    text-align: right;
+    white-space: nowrap;
+  }
+
+  .fin-amount-sub {
+    font-size: 0.75rem;
+    color: var(--bs-secondary-color);
+  }
+
+  .fin-amount-discount {
+    font-size: 0.75rem;
+    color: var(--bs-danger);
+    font-weight: 500;
+  }
+
+  .fin-discount-badge {
+    font-size: 0.6875rem;
+    font-weight: 600;
+  }
+
+  .fin-patient-name {
+    font-weight: 600;
+  }
+
+  .fin-patient-id {
+    font-size: 0.75rem;
+    color: var(--bs-secondary-color);
+  }
+
+  .fin-doctor-card {
+    border: 1px solid var(--bs-border-color);
+    border-radius: 0.875rem;
+    margin-bottom: 1rem;
+    overflow: hidden;
+  }
+
+  .fin-doctor-card-header {
+    padding: 1rem 1.25rem;
+    background: rgba(var(--bs-primary-rgb), 0.05);
+    border-bottom: 1px solid var(--bs-border-color);
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .fin-doctor-name {
+    font-size: 1.05rem;
+    font-weight: 700;
+    margin: 0;
+  }
+
+  .fin-metric-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 0.75rem;
+    padding: 1rem 1.25rem;
+  }
+
+  .fin-metric-box {
+    padding: 0.65rem 0.75rem;
+    border-radius: 0.5rem;
+    background: rgba(var(--bs-light-rgb), 0.45);
+    border: 1px solid var(--bs-border-color-translucent);
+  }
+
+  .fin-metric-label {
+    font-size: 0.6875rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--bs-secondary-color);
+    margin-bottom: 0.2rem;
+  }
+
+  .fin-metric-value {
+    font-weight: 700;
+    font-size: 0.9375rem;
+  }
+
+  .fin-metric-discount {
+    font-size: 0.75rem;
+    color: var(--bs-danger);
+  }
+
+  .fin-total-row {
+    background: rgba(var(--bs-primary-rgb), 0.06);
+    font-weight: 600;
+  }
+
+  .fin-closure-bar {
+    padding: 1rem 1.25rem;
+    border-top: 1px solid var(--bs-border-color);
+    background: rgba(var(--bs-success-rgb), 0.04);
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+  }
+}

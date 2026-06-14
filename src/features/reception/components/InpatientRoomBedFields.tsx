@@ -2,7 +2,6 @@ import { useMemo } from 'react'
 import { Alert, Col, Form, Row } from 'react-bootstrap'
 
 import { currency } from '@/context/constants'
-import InpatientBillingModeSelector from '@/features/reception/components/InpatientBillingModeSelector'
 import {
   beds,
   getAvailableBedCountInRoom,
@@ -11,15 +10,12 @@ import {
   getSelectableBedsInRoom,
   rooms,
 } from '@/shared/services/hmsStore'
-import type { InpatientBillingMode } from '@/shared/types'
 
 type InpatientRoomBedFieldsProps = {
   roomId: string
   bedId: string
-  billingMode: InpatientBillingMode
   onRoomChange: (roomId: string) => void
   onBedChange: (bedId: string) => void
-  onBillingModeChange: (mode: InpatientBillingMode) => void
   isEditMode?: boolean
   excludeAdmissionId?: string
   currentBedId?: string
@@ -28,10 +24,8 @@ type InpatientRoomBedFieldsProps = {
 const InpatientRoomBedFields = ({
   roomId,
   bedId,
-  billingMode,
   onRoomChange,
   onBedChange,
-  onBillingModeChange,
   isEditMode = false,
   excludeAdmissionId,
   currentBedId,
@@ -127,18 +121,12 @@ const InpatientRoomBedFields = ({
       </Row>
 
       {selectedBed && (
-        <Alert variant="secondary" className="py-2 small">
-          <strong>Bed price:</strong> {currency}
-          {selectedBed.dailyRate} per night ({getRoomById(roomId)?.name})
+        <Alert variant="secondary" className="py-2 small mb-0">
+          <strong>Bed rate:</strong> {currency}
+          {selectedBed.dailyRate} per night ({getRoomById(roomId)?.name}). Billing starts from the
+          assignment date — one charge per night until discharge.
         </Alert>
       )}
-
-      <InpatientBillingModeSelector
-        value={billingMode}
-        onChange={onBillingModeChange}
-        nightlyRate={selectedBed?.dailyRate}
-        namePrefix="room-bed"
-      />
     </>
   )
 }

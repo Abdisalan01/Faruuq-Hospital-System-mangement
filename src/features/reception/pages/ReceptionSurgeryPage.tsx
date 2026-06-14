@@ -33,7 +33,7 @@ import {
   type SurgeryReceptionMode,
 } from '@/shared/services/hmsStore'
 import type { ReceptionReceipt, SurgeryRequest } from '@/shared/types'
-import { refreshVisitWorkflow } from '@/shared/utils/visitConsultation'
+import { isReceptionSurgeryVisible, refreshVisitWorkflow } from '@/shared/utils/visitConsultation'
 
 const PAGE_SIZE = 10
 
@@ -133,12 +133,23 @@ const ReceptionSurgeryPage = () => {
   const [printReceipt, setPrintReceipt] = useState<ReceptionReceipt | null>(null)
   const [showPrintModal, setShowPrintModal] = useState(false)
 
+  const surgerySyncKey = useMemo(
+    () =>
+      storeSurgeryRequests
+        .map((r) => {
+          const visit = getVisitById(r.visitId)
+          return `${r.id}:${r.status}:${r.lastModifiedAt ?? ''}:${visit?.status ?? ''}`
+        })
+        .join('|'),
+    [dataVersion, storeSurgeryRequests.length],
+  )
+
   const allRequests = useMemo(
     () =>
       [...storeSurgeryRequests]
-        .filter((r) => r.status !== 'Cancelled')
+        .filter(isReceptionSurgeryVisible)
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [storeSurgeryRequests.length, tick, dataVersion],
+    [surgerySyncKey],
   )
 
   const filtered = useMemo(() => {

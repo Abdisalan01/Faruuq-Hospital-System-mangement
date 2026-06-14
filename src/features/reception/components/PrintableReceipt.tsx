@@ -1,6 +1,6 @@
 import { currency } from '@/context/constants'
-import { THERMAL_LOGO_SRC } from '@/shared/constants/branding'
-import { getPatientById, systemSettings } from '@/shared/services/hmsStore'
+import PrintDocumentHeader from '@/shared/components/PrintDocumentHeader'
+import { getPatientById } from '@/shared/services/hmsStore'
 import type { ReceptionReceipt } from '@/shared/types'
 
 type PrintableReceiptProps = {
@@ -9,21 +9,12 @@ type PrintableReceiptProps = {
 
 const PrintableReceipt = ({ receipt }: PrintableReceiptProps) => {
   const patient = getPatientById(receipt.patientId)
+  const isObstetric = receipt.type === 'obstetric'
   const numberLabel = receipt.isEmergency ? 'Emergency Number' : 'Patient Number'
 
   return (
     <div className="thermal-slip reception-receipt bg-white text-dark">
-      <img src={THERMAL_LOGO_SRC} alt="" className="slip-logo" />
-
-      <div className="text-center mb-2" style={{ fontSize: '10pt' }}>
-        <strong>{systemSettings.hospitalName}</strong>
-        <br />
-        <span className="text-muted">{systemSettings.address}</span>
-        <br />
-        <span className="text-muted">{systemSettings.phone}</span>
-      </div>
-
-      <hr className="my-2" />
+      <PrintDocumentHeader variant="thermal" />
 
       {receipt.type === 'lab' && (
         <p className="text-center fw-bold mb-2" style={{ fontSize: '11pt' }}>
@@ -38,6 +29,11 @@ const PrintableReceipt = ({ receipt }: PrintableReceiptProps) => {
       {receipt.type === 'pharmacy' && (
         <p className="text-center fw-bold mb-2" style={{ fontSize: '11pt' }}>
           INPATIENT MEDICINE RECEIPT
+        </p>
+      )}
+      {receipt.type === 'obstetric' && (
+        <p className="text-center fw-bold mb-2" style={{ fontSize: '11pt' }}>
+          OBSTETRICIAN FEE RECEIPT
         </p>
       )}
       {receipt.type === 'checkout' && (
@@ -70,14 +66,24 @@ const PrintableReceipt = ({ receipt }: PrintableReceiptProps) => {
           <span className="slip-value">{receipt.surgeryRequestNumber}</span>
         </div>
       )}
-      <div className="slip-row">
-        <span className="slip-label">Patient ID</span>
-        <span className="slip-value">{receipt.patientId}</span>
-      </div>
-      <div className="slip-row">
-        <span className="slip-label">{numberLabel}</span>
-        <span className="slip-value fw-bold">{receipt.patientNumber}</span>
-      </div>
+      {receipt.obstetricRegistrationNumber && (
+        <div className="slip-row">
+          <span className="slip-label">Registration #</span>
+          <span className="slip-value">{receipt.obstetricRegistrationNumber}</span>
+        </div>
+      )}
+      {!isObstetric && (
+        <>
+          <div className="slip-row">
+            <span className="slip-label">Patient ID</span>
+            <span className="slip-value">{receipt.patientId}</span>
+          </div>
+          <div className="slip-row">
+            <span className="slip-label">{numberLabel}</span>
+            <span className="slip-value fw-bold">{receipt.patientNumber}</span>
+          </div>
+        </>
+      )}
       {receipt.isEmergency && (
         <p className="text-center text-danger fw-bold small mb-2">EMERGENCY</p>
       )}
@@ -85,20 +91,41 @@ const PrintableReceipt = ({ receipt }: PrintableReceiptProps) => {
         <span className="slip-label">Doctor</span>
         <span className="slip-value">{receipt.doctorName}</span>
       </div>
-      <div className="slip-row">
-        <span className="slip-label">Patient</span>
-        <span className="slip-value">{patient?.fullName}</span>
-      </div>
-      <div className="slip-row">
-        <span className="slip-label">Age / Gender</span>
-        <span className="slip-value">
-          {patient?.age} · {patient?.gender}
-        </span>
-      </div>
-      <div className="slip-row">
-        <span className="slip-label">Phone</span>
-        <span className="slip-value">{patient?.phone}</span>
-      </div>
+      {isObstetric ? (
+        <>
+          <div className="slip-row">
+            <span className="slip-label">Mother</span>
+            <span className="slip-value">{receipt.motherFullName}</span>
+          </div>
+          <div className="slip-row">
+            <span className="slip-label">Age / Phone</span>
+            <span className="slip-value">
+              {receipt.motherAge} · {receipt.motherPhone}
+            </span>
+          </div>
+          <div className="slip-row">
+            <span className="slip-label">Baby gender</span>
+            <span className="slip-value">{receipt.childGender}</span>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="slip-row">
+            <span className="slip-label">Patient</span>
+            <span className="slip-value">{patient?.fullName}</span>
+          </div>
+          <div className="slip-row">
+            <span className="slip-label">Age / Gender</span>
+            <span className="slip-value">
+              {patient?.age} · {patient?.gender}
+            </span>
+          </div>
+          <div className="slip-row">
+            <span className="slip-label">Phone</span>
+            <span className="slip-value">{patient?.phone}</span>
+          </div>
+        </>
+      )}
 
       <table className="w-100 my-2" style={{ fontSize: '9pt', borderCollapse: 'collapse' }}>
         <thead>
@@ -154,10 +181,6 @@ const PrintableReceipt = ({ receipt }: PrintableReceiptProps) => {
         {receipt.paymentConfirmed && <p className="small mb-0 mt-2">✓ Payment confirmed</p>}
       </div>
 
-      <div className="slip-footer mt-3">
-        Thank you — {systemSettings.hospitalName}
-      </div>
-
       <style>{`
         .reception-receipt .slip-row {
           display: flex;
@@ -174,13 +197,6 @@ const PrintableReceipt = ({ receipt }: PrintableReceiptProps) => {
         .reception-receipt .slip-value {
           text-align: right;
           word-break: break-word;
-        }
-        .reception-receipt .slip-footer {
-          text-align: center;
-          font-size: 8pt;
-          color: #444;
-          padding-top: 2mm;
-          border-top: 1px solid #000;
         }
       `}</style>
     </div>

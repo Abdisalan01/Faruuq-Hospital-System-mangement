@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Button, Card, CardBody, Form, Modal, Table } from 'react-bootstrap'
 import { Link } from 'react-router-dom'
 
@@ -63,9 +63,12 @@ function getPatientVisitSummary(patientId: string): { number: string; doctor: st
   return { number: n ? `#${n}` : '—', doctor }
 }
 
+const PAGE_SIZE = 10
+
 const PatientListPage = () => {
   const { dataVersion } = useHmsStoreContext()
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
   const [slipData, setSlipData] = useState<PatientRegistrationSlipData | null>(null)
   const [showPrintModal, setShowPrintModal] = useState(false)
   const [printError, setPrintError] = useState('')
@@ -96,6 +99,25 @@ const PatientListPage = () => {
       )
     })
   }, [search, patients.length, dataVersion])
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages)
+
+  const pageItems = useMemo(() => {
+    const start = (safePage - 1) * PAGE_SIZE
+    return filtered.slice(start, start + PAGE_SIZE)
+  }, [filtered, safePage])
+
+  useEffect(() => {
+    setPage(1)
+  }, [search])
+
+  useEffect(() => {
+    if (page > totalPages) setPage(totalPages)
+  }, [page, totalPages])
+
+  const rangeStart = filtered.length === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1
+  const rangeEnd = Math.min(safePage * PAGE_SIZE, filtered.length)
 
   return (
     <PermissionGuard permissions={['register_patients']}>
@@ -156,7 +178,7 @@ const PatientListPage = () => {
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((patient) => {
+                  pageItems.map((patient) => {
                     const { number, doctor } = getPatientVisitSummary(patient.id)
                     return (
                     <tr key={patient.id}>
@@ -207,6 +229,37 @@ const PatientListPage = () => {
                 )}
               </tbody>
             </Table>
+          </div>
+
+          <div className="d-flex flex-wrap justify-content-between align-items-center gap-2 pt-3 border-top mt-3">
+            <p className="text-muted small mb-0">
+              {filtered.length === 0
+                ? 'Showing 0 records'
+                : `Showing ${rangeStart}–${rangeEnd} of ${filtered.length}`}
+            </p>
+            <div className="d-flex gap-2">
+              <Button
+                size="sm"
+                variant="outline-secondary"
+                disabled={safePage <= 1}
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+              >
+                <IconifyIcon icon="solar:alt-arrow-left-broken" className="me-1" />
+                Prev
+              </Button>
+              <span className="align-self-center small text-muted">
+                Page {safePage} of {totalPages}
+              </span>
+              <Button
+                size="sm"
+                variant="outline-secondary"
+                disabled={safePage >= totalPages}
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              >
+                Next
+                <IconifyIcon icon="solar:alt-arrow-right-broken" className="ms-1" />
+              </Button>
+            </div>
           </div>
         </CardBody>
       </Card>

@@ -1,0 +1,116 @@
+.searchable-select {
+  position: relative;
+  width: 100%;
+}
+
+.searchable-select-field {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.375rem;
+  background: var(--bs-body-bg);
+  padding: 0.375rem 0.625rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.searchable-select.is-open .searchable-select-field,
+.searchable-select-field:focus-within {
+  border-color: rgba(var(--bs-primary-rgb), 0.55);
+  box-shadow: 0 0 0 0.2rem rgba(var(--bs-primary-rgb), 0.12);
+}
+
+.searchable-select-icon {
+  color: var(--bs-secondary-color);
+  flex-shrink: 0;
+  font-size: 1rem;
+}
+
+.searchable-select-input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font-size: 0.9375rem;
+  color: var(--bs-body-color);
+}
+
+.searchable-select-input::placeholder {
+  color: var(--bs-secondary-color);
+}
+
+.searchable-select-clear {
+  border: 0;
+  background: transparent;
+  color: var(--bs-secondary-color);
+  font-size: 1.25rem;
+  line-height: 1;
+  padding: 0 0.15rem;
+  cursor: pointer;
+}
+
+.searchable-select-clear:hover {
+  color: var(--bs-danger);
+}
+
+.searchable-select-dropdown {
+  position: absolute;
+  z-index: 1050;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid var(--bs-border-color);
+  border-radius: 0.5rem;
+  background: var(--bs-body-bg);
+  box-shadow: 0 0.75rem 1.5rem rgba(15, 23, 42, 0.12);
+}
+
+.searchable-select-group-label {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 0.45rem 0.75rem;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--bs-secondary-color);
+  background: var(--bs-light);
+  border-bottom: 1px solid var(--bs-border-color);
+}
+
+.searchable-select-option {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.875rem;
+  color: var(--bs-body-color);
+  cursor: pointer;
+}
+
+.searchable-select-option:hover,
+.searchable-select-option.is-selected {
+  background: rgba(var(--bs-primary-rgb), 0.08);
+}
+
+.searchable-select-empty {
+  padding: 0.75rem;
+  font-size: 0.875rem;
+  color: var(--bs-secondary-color);
+  text-align: center;
+}
+
+.searchable-select-sm .searchable-select-input {
+  font-size: 0.8125rem;
+}
+
+.searchable-select.is-disabled {
+  opacity: 0.65;
+  pointer-events: none;
+}

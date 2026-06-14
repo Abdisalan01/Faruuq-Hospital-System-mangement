@@ -1,5 +1,4 @@
-import { THERMAL_LOGO_SRC } from '@/shared/constants/branding'
-import { systemSettings } from '@/shared/services/hmsStore'
+import PrintDocumentHeader from '@/shared/components/PrintDocumentHeader'
 import type { Gender } from '@/shared/types'
 
 export type PatientRegistrationSlipData = {
@@ -66,17 +65,9 @@ const PatientRegistrationSlip = ({ data }: PatientRegistrationSlipProps) => {
           text-align: right;
           word-break: break-word;
         }
-        .slip-footer {
-          text-align: center;
-          font-size: 8pt;
-          color: #444;
-          margin-top: 4mm;
-          padding-top: 2mm;
-          border-top: 1px solid #000;
-        }
       `}</style>
 
-      <img src={THERMAL_LOGO_SRC} alt="" className="slip-logo" />
+      <PrintDocumentHeader variant="thermal" />
 
       <div className={`slip-patient-number ${data.isEmergency ? 'emergency' : ''}`}>
         <div className="slip-patient-number-label">{numberLabel}</div>
@@ -106,12 +97,6 @@ const PatientRegistrationSlip = ({ data }: PatientRegistrationSlipProps) => {
       <div className="slip-row">
         <span className="slip-label">Referred Doctor</span>
         <span className="slip-value">{data.referredDoctorName}</span>
-      </div>
-
-      <div className="slip-footer">
-        {new Date(data.createdAt).toLocaleString()}
-        <br />
-        {systemSettings.hospitalName}
       </div>
     </div>
   )

@@ -39,6 +39,7 @@ export type ChargeType =
   | 'Pharmacy'
   | 'Room'
   | 'Surgery'
+  | 'Obstetrics'
   | 'Other'
 
 export type ExpenseCategory =
@@ -78,23 +79,35 @@ export interface StaffUser {
   lastModifiedAt?: string
 }
 
-export type LabTestCategory = 'Laboratory' | 'Radiology' | 'Imaging'
+/** Suggested defaults — any custom category name is allowed */
+export const DEFAULT_LAB_TEST_CATEGORIES = ['Laboratory', 'Radiology', 'Imaging'] as const
+export type LabTestCategory = string
 
 export type LabSampleType = 'Blood' | 'Urine' | 'Stool' | 'Other' | 'N/A'
 
 export interface LabTestCatalog {
   id: string
+  /** Lab_ID */
   testId: string
+  /** Test_Name */
   testName: string
   category: LabTestCategory
   price: number
+  /** Unit_Reference */
+  unitReference?: string
   isActive: boolean
-  description?: string
-  normalRange?: string
-  unit?: string
-  sampleType?: LabSampleType
-  turnaroundTime?: string
   createdAt: string
+  lastModifiedAt?: string
+  /** @deprecated use unitReference */
+  description?: string
+  /** @deprecated use unitReference */
+  normalRange?: string
+  /** @deprecated use unitReference */
+  unit?: string
+  /** @deprecated */
+  sampleType?: LabSampleType
+  /** @deprecated */
+  turnaroundTime?: string
 }
 
 export interface MedicineCatalogItem {
@@ -108,6 +121,7 @@ export interface MedicineCatalogItem {
   category: string
   isActive: boolean
   createdAt: string
+  lastModifiedAt?: string
 }
 
 export type SurgeryCategory = 'General' | 'Orthopedic' | 'Cardiac'
@@ -131,6 +145,7 @@ export interface SurgeryCatalog {
   preOpInstructions?: string
   postOpCare?: string
   createdAt: string
+  lastModifiedAt?: string
 }
 
 export interface Discount {
@@ -269,7 +284,38 @@ export interface Visit {
   isFollowUp?: boolean
 }
 
-export type ReceptionReceiptType = 'registration' | 'lab' | 'checkout' | 'surgery' | 'pharmacy'
+export type ReceptionReceiptType =
+  | 'registration'
+  | 'lab'
+  | 'checkout'
+  | 'surgery'
+  | 'pharmacy'
+  | 'obstetric'
+
+export type ObstetricChildGender = 'Male' | 'Female'
+
+export type ObstetricDeliveryStatus = 'Pending' | 'Paid' | 'Cancelled'
+
+export interface ObstetricDelivery {
+  id: string
+  registrationNumber: string
+  motherFullName: string
+  motherAge: number
+  motherPhone: string
+  childGender: ObstetricChildGender
+  doctorId: string
+  obstetricianFee: number
+  amountPaid: number
+  paymentConfirmed: boolean
+  paymentConfirmedAt?: string
+  paidByReceptionId?: string
+  receiptNumber?: string
+  receiptId?: string
+  status: ObstetricDeliveryStatus
+  createdAt: string
+  createdBy: string
+  lastModifiedAt?: string
+}
 
 export interface ReceptionReceiptLine {
   description: string
@@ -295,6 +341,11 @@ export interface ReceptionReceipt {
   paymentConfirmed: boolean
   labRequestNumber?: string
   surgeryRequestNumber?: string
+  obstetricRegistrationNumber?: string
+  motherFullName?: string
+  motherAge?: number
+  motherPhone?: string
+  childGender?: ObstetricChildGender
   createdAt: string
   createdBy: string
 }
@@ -306,6 +357,7 @@ export interface ClinicalNote {
   doctorId: string
   note: string
   createdAt: string
+  lastModifiedAt?: string
 }
 
 export interface Diagnosis {
@@ -333,6 +385,7 @@ export interface Prescription {
   items: PrescriptionItem[]
   status: PrescriptionStatus
   createdAt: string
+  lastModifiedAt?: string
   /** Set when ordered for an admitted inpatient */
   admissionId?: string
   /** Nurse or doctor who submitted the order */
@@ -347,7 +400,18 @@ export interface Prescription {
   approvedByPharmacyId?: string
   dispensedAt?: string
   dispensedByPharmacyId?: string
+  /** Pharmacy sent unpaid request to reception cashier */
+  sentToReceptionAt?: string
+  sentToReceptionByPharmacyId?: string
+  /** Cash collected at pharmacy (not reception) */
+  collectedByPharmacyId?: string
 }
+
+export type InpatientMedicinePaymentStatus =
+  | 'awaiting_payment'
+  | 'at_reception'
+  | 'paid_cash'
+  | 'credit_book'
 
 export interface LabTestItem {
   testName: string
@@ -394,6 +458,8 @@ export interface AdmissionRequest {
   status: 'Pending' | 'Assigned' | 'Rejected' | 'Cancelled'
   billingMode?: InpatientBillingMode
   createdAt: string
+  /** Set on every admission save — resolves meta vs table conflicts */
+  lastModifiedAt?: string
 }
 
 export interface Ward {
@@ -483,6 +549,7 @@ export interface DoctorOrder {
   quantity?: number
   status: DoctorOrderStatus
   createdAt: string
+  lastModifiedAt?: string
 }
 
 export interface SurgeryRequest {
@@ -507,6 +574,8 @@ export interface SurgeryRequest {
   completedAt?: string
   completedBy?: string
   createdAt: string
+  /** Set on every surgery save — resolves meta vs table conflicts */
+  lastModifiedAt?: string
 }
 
 export type SupplyRequestDepartment = 'Doctor' | 'Emergency' | 'Laboratory' | 'Nursing'
@@ -558,6 +627,7 @@ export interface InventoryItem {
   unitPrice: number
   purchasePrice?: number
   createdAt: string
+  lastModifiedAt?: string
 }
 
 export interface StockTransaction {
@@ -565,7 +635,10 @@ export interface StockTransaction {
   itemId: string
   type: StockTransactionType
   quantity: number
+  /** Selling price at time of transaction */
   unitPrice?: number
+  /** Purchase/cost price at time of transaction — for profit calculation */
+  unitCost?: number
   department?: string
   reference?: string
   notes?: string
@@ -629,6 +702,8 @@ export interface SystemSettings {
   doctorPatientNumberFee?: number
   /** Admin-set fee when reception assigns emergency */
   emergencyPatientNumberFee?: number
+  /** Admin-set obstetrician / delivery registration fee */
+  obstetricianFee?: number
   medicineCodePrefix: string
   medicineCodeStartNumber: number
   medicineCodeNextNumber: number
@@ -643,6 +718,8 @@ export interface SystemSettings {
   surgeryCodePadLength: number
   discountLimits: DiscountLimitsSettings
   lastModifiedAt?: string
+  /** Set when patient data was wiped — blocks ghost data until a new patient is registered */
+  patientDataClearedAt?: string
 }
 
 export type PatientHistoryPaymentStatus = 'Paid' | 'Unpaid' | 'On book'
@@ -666,4 +743,122 @@ export interface PatientHistorySummary {
   totalPaid: number
   outstandingBalance: number
   hasDebt: boolean
+}
+
+export type ReportDatePeriod = 'day' | 'week' | 'month' | 'year' | 'custom'
+
+export type LabCategoryBreakdown = {
+  category: string
+  testCount: number
+  patientCount: number
+  subtotal: number
+  discount: number
+  collected: number
+}
+
+export type DoctorFinancialReport = {
+  doctorId: string
+  doctorName: string
+  registrationCount: number
+  registrationSubtotal: number
+  registrationDiscount: number
+  registrationCollected: number
+  labPatientCount: number
+  labTestCount: number
+  labSubtotal: number
+  labDiscount: number
+  labCollected: number
+  labByCategory: LabCategoryBreakdown[]
+  surgeryCount: number
+  surgerySubtotal: number
+  surgeryDiscount: number
+  surgeryCollected: number
+  obstetricCount: number
+  obstetricSubtotal: number
+  obstetricDiscount: number
+  obstetricCollected: number
+  grossTotal: number
+  commissionRate: number
+  commissionAmount: number
+}
+
+export interface DoctorCommissionPayout extends DoctorFinancialReport {
+  id: string
+  periodMonth: string
+  confirmedAt: string
+  confirmedBy: string
+  notes?: string
+}
+
+export type HospitalPharmacyBreakdown = {
+  incomeRecords: number
+  stockSales: number
+  inpatientMedicineRequests: number
+  supplyRequests: number
+  total: number
+}
+
+export type HospitalRevenueReport = {
+  registration: { count: number; subtotal: number; discount: number; collected: number }
+  laboratory: { count: number; subtotal: number; discount: number; collected: number }
+  inpatient: { count: number; subtotal: number; discount: number; collected: number }
+  surgery: { count: number; subtotal: number; discount: number; collected: number }
+  pharmacy: HospitalPharmacyBreakdown & { count: number; discount: number }
+  obstetrics: { count: number; subtotal: number; discount: number; collected: number }
+  grossTotal: number
+}
+
+export type FinancialFeeCategory =
+  | 'Registration'
+  | 'Laboratory'
+  | 'Surgery'
+  | 'Obstetrics'
+  | 'In-patient'
+  | 'Pharmacy'
+
+export type FinancialTransactionLine = {
+  id: string
+  date: string
+  category: FinancialFeeCategory
+  patientId: string
+  patientName: string
+  doctorId: string
+  doctorName: string
+  receiptNumber: string
+  reference?: string
+  subtotal: number
+  discountPercent?: number
+  discountAmount: number
+  collected: number
+  hasDiscount: boolean
+}
+
+export type PharmacyTransactionSource = 'Stock Sale' | 'Inpatient Medicine' | 'Supply Request'
+
+export type PharmacyTransactionLine = {
+  id: string
+  date: string
+  source: PharmacyTransactionSource
+  itemName: string
+  quantity: number
+  unitCost: number
+  unitPrice: number
+  revenue: number
+  cost: number
+  profit: number
+  marginPercent: number
+  reference?: string
+  patientOrDept?: string
+  notes?: string
+}
+
+export type PharmacyProfitSummary = {
+  revenue: number
+  cost: number
+  profit: number
+  marginPercent: number
+  transactionCount: number
+  stockSales: { count: number; revenue: number; profit: number }
+  inpatientMedicine: { count: number; revenue: number; profit: number }
+  supplyRequests: { count: number; revenue: number; profit: number }
 }

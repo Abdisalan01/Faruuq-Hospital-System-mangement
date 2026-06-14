@@ -10,6 +10,8 @@ import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
 import { getPatientById, getPatientHistory } from '@/shared/services/hmsStore'
 import type { PatientHistoryPaymentStatus } from '@/shared/types'
+import TablePagination from '@/shared/components/TablePagination'
+import { useTablePagination } from '@/shared/hooks/useTablePagination'
 
 const statusVariant = (status: PatientHistoryPaymentStatus) => {
   if (status === 'Paid') return 'success'
@@ -21,6 +23,16 @@ const PatientHistoryPage = () => {
   const { id } = useParams<{ id: string }>()
   const patient = id ? getPatientById(id) : undefined
   const history = useMemo(() => (id ? getPatientHistory(id) : null), [id])
+  const entries = history?.entries ?? []
+  const {
+    pageItems: entryPageItems,
+    setPage: setEntryPage,
+    safePage: entryPage,
+    totalPages: entryTotalPages,
+    rangeStart: entryRangeStart,
+    rangeEnd: entryRangeEnd,
+    totalItems: entryTotalItems,
+  } = useTablePagination(entries, 10, [entries.length, id])
   const [showPrint, setShowPrint] = useState(false)
 
   if (!patient || !history) {
@@ -119,7 +131,7 @@ const PatientHistoryPage = () => {
                     </td>
                   </tr>
                 ) : (
-                  history.entries.map((entry) => (
+                  entryPageItems.map((entry) => (
                     <tr key={entry.id}>
                       <td>{new Date(entry.date).toLocaleString()}</td>
                       <td>{entry.category}</td>
@@ -145,6 +157,15 @@ const PatientHistoryPage = () => {
               </tbody>
             </Table>
           </div>
+          <TablePagination
+            className="pt-3 border-top mt-3"
+            totalItems={entryTotalItems}
+            rangeStart={entryRangeStart}
+            rangeEnd={entryRangeEnd}
+            safePage={entryPage}
+            totalPages={entryTotalPages}
+            onPageChange={setEntryPage}
+          />
         </CardBody>
       </Card>
 

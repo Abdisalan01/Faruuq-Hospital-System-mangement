@@ -7,6 +7,8 @@ import { Link } from 'react-router-dom'
 
 import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
+import TablePagination from '@/shared/components/TablePagination'
+import { useTablePagination } from '@/shared/hooks/useTablePagination'
 import {
   expenseRecords,
   getDashboardStats,
@@ -33,6 +35,16 @@ const AdminReportsPage = () => {
         p.id.toLowerCase().includes(q),
     )
   }, [historySearch, patients.length])
+
+  const {
+    pageItems,
+    setPage,
+    safePage,
+    totalPages,
+    rangeStart,
+    rangeEnd,
+    totalItems,
+  } = useTablePagination(filteredPatients, 10, [filteredPatients.length, historySearch])
 
   return (
     <PermissionGuard permissions={['reports']}>
@@ -154,7 +166,7 @@ const AdminReportsPage = () => {
                     </td>
                   </tr>
                 ) : (
-                  filteredPatients.map((patient) => {
+                  pageItems.map((patient) => {
                   const history = getPatientHistory(patient.id)
                   return (
                     <tr key={patient.id}>
@@ -188,6 +200,15 @@ const AdminReportsPage = () => {
               </tbody>
             </Table>
           </div>
+          <TablePagination
+            className="pt-3 border-top mt-3"
+            totalItems={totalItems}
+            rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
+            safePage={safePage}
+            totalPages={totalPages}
+            onPageChange={setPage}
+          />
         </CardBody>
       </Card>
     </PermissionGuard>

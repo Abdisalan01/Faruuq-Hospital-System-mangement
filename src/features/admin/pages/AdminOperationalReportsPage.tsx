@@ -6,6 +6,8 @@ import { currency } from '@/context/constants'
 import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
 import StatusBadge from '@/shared/components/StatusBadge'
+import TablePagination from '@/shared/components/TablePagination'
+import { useTablePagination } from '@/shared/hooks/useTablePagination'
 import {
   getStaffById,
   incomeRecords,
@@ -70,6 +72,13 @@ const AdminOperationalReportsPage = () => {
       }
     })
   }, [staffUsers.length, payments.length, receptionReceipts.length])
+
+  const pharmacyIncomePagination = useTablePagination(pharmacyRows.rxIncome, 10, [
+    pharmacyRows.rxIncome.length,
+    tab,
+  ])
+  const doctorPagination = useTablePagination(doctorRows, 10, [doctorRows.length, tab])
+  const receptionPagination = useTablePagination(receptionRows, 10, [receptionRows.length, tab])
 
   return (
     <PermissionGuard permissions={['reports', 'user_management']}>
@@ -137,7 +146,7 @@ const AdminOperationalReportsPage = () => {
                         </td>
                       </tr>
                     ) : (
-                      pharmacyRows.rxIncome.map((r) => (
+                      pharmacyIncomePagination.pageItems.map((r) => (
                         <tr key={r.id}>
                           <td>{r.createdAt.split('T')[0]}</td>
                           <td>{r.description}</td>
@@ -150,6 +159,17 @@ const AdminOperationalReportsPage = () => {
                     )}
                   </tbody>
                 </Table>
+                <div className="p-3">
+                  <TablePagination
+                    className="pt-3 border-top"
+                    totalItems={pharmacyIncomePagination.totalItems}
+                    rangeStart={pharmacyIncomePagination.rangeStart}
+                    rangeEnd={pharmacyIncomePagination.rangeEnd}
+                    safePage={pharmacyIncomePagination.safePage}
+                    totalPages={pharmacyIncomePagination.totalPages}
+                    onPageChange={pharmacyIncomePagination.setPage}
+                  />
+                </div>
               </CardBody>
             </Card>
           </Tab.Pane>
@@ -176,7 +196,7 @@ const AdminOperationalReportsPage = () => {
                         </td>
                       </tr>
                     ) : (
-                      doctorRows.map((row) => (
+                      doctorPagination.pageItems.map((row) => (
                         <tr key={row.id}>
                           <td className="fw-medium">{row.name}</td>
                           <td>
@@ -194,6 +214,17 @@ const AdminOperationalReportsPage = () => {
                     )}
                   </tbody>
                 </Table>
+                <div className="p-3">
+                  <TablePagination
+                    className="pt-3 border-top"
+                    totalItems={doctorPagination.totalItems}
+                    rangeStart={doctorPagination.rangeStart}
+                    rangeEnd={doctorPagination.rangeEnd}
+                    safePage={doctorPagination.safePage}
+                    totalPages={doctorPagination.totalPages}
+                    onPageChange={doctorPagination.setPage}
+                  />
+                </div>
               </CardBody>
             </Card>
           </Tab.Pane>
@@ -220,7 +251,7 @@ const AdminOperationalReportsPage = () => {
                         </td>
                       </tr>
                     ) : (
-                      receptionRows.map((row) => {
+                      receptionPagination.pageItems.map((row) => {
                         const staff = getStaffById(row.id)
                         return (
                           <tr key={row.id}>
@@ -243,6 +274,17 @@ const AdminOperationalReportsPage = () => {
                     )}
                   </tbody>
                 </Table>
+                <div className="p-3">
+                  <TablePagination
+                    className="pt-3 border-top"
+                    totalItems={receptionPagination.totalItems}
+                    rangeStart={receptionPagination.rangeStart}
+                    rangeEnd={receptionPagination.rangeEnd}
+                    safePage={receptionPagination.safePage}
+                    totalPages={receptionPagination.totalPages}
+                    onPageChange={receptionPagination.setPage}
+                  />
+                </div>
               </CardBody>
             </Card>
           </Tab.Pane>

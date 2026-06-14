@@ -82,6 +82,7 @@ export default function SurgeryCatalogView({
   const [editId, setEditId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SurgeryCatalog | null>(null)
   const [pageMessage, setPageMessage] = useState('')
+  const [pageError, setPageError] = useState('')
   const [formError, setFormError] = useState('')
   const [saving, setSaving] = useState(false)
   const [importFile, setImportFile] = useState<File | null>(null)
@@ -149,6 +150,7 @@ export default function SurgeryCatalogView({
   }
 
   const persistCatalog = async (successMessage: string) => {
+    setPageError('')
     if (!isSupabase) {
       setPageMessage(`${successMessage} (database mode is off — enable VITE_USE_SUPABASE in .env)`)
       refresh()
@@ -162,7 +164,7 @@ export default function SurgeryCatalogView({
       refresh()
     } catch (err) {
       const detail = err instanceof Error ? err.message : 'Unknown error'
-      setPageMessage(`Database save failed: ${detail}`)
+      setPageError(`Database save failed: ${detail}`)
       refresh()
     } finally {
       setSaving(false)
@@ -183,6 +185,10 @@ export default function SurgeryCatalogView({
   const handleSave = async () => {
     if (!form.name.trim()) {
       setFormError('Surgery name is required')
+      return
+    }
+    if (form.price < 0 || Number.isNaN(form.price)) {
+      setFormError('Price must be a valid non-negative number')
       return
     }
 
@@ -207,7 +213,7 @@ export default function SurgeryCatalogView({
       setDeleteTarget(null)
       await persistCatalog(`${deleteTarget.name} deleted.`)
     } catch (err) {
-      setPageMessage(err instanceof Error ? err.message : 'Could not delete surgery')
+      setPageError(err instanceof Error ? err.message : 'Could not delete surgery')
       refresh()
     }
   }
@@ -285,6 +291,11 @@ export default function SurgeryCatalogView({
       {pageMessage && (
         <Alert variant="success" dismissible onClose={() => setPageMessage('')}>
           {pageMessage}
+        </Alert>
+      )}
+      {pageError && (
+        <Alert variant="danger" dismissible onClose={() => setPageError('')}>
+          {pageError}
         </Alert>
       )}
 

@@ -6,6 +6,8 @@ import StatCard from '@/shared/components/StatCard'
 import StatusBadge from '@/shared/components/StatusBadge'
 import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
+import TablePagination from '@/shared/components/TablePagination'
+import { useTablePagination } from '@/shared/hooks/useTablePagination'
 import {
   admissions,
   beds,
@@ -17,6 +19,15 @@ import {
 
 const NurseDashboardPage = () => {
   const activeAdmissions = admissions.filter((a) => a.status === 'Active')
+  const {
+    pageItems,
+    setPage,
+    safePage,
+    totalPages,
+    rangeStart,
+    rangeEnd,
+    totalItems,
+  } = useTablePagination(activeAdmissions, 10, [activeAdmissions.length])
   const occupiedBeds = beds.filter((b) => b.isOccupied).length
   const totalBeds = beds.length
   const medicationsDue = doctorOrders.filter(
@@ -84,7 +95,7 @@ const NurseDashboardPage = () => {
                         </td>
                       </tr>
                     ) : (
-                      activeAdmissions.map((adm) => {
+                      pageItems.map((adm) => {
                         const patient = getPatientById(adm.patientId)
                         const ward = wards.find((w) => w.id === adm.wardId)
                         const room = rooms.find((r) => r.id === adm.roomId)
@@ -112,6 +123,15 @@ const NurseDashboardPage = () => {
                   </tbody>
                 </Table>
               </div>
+              <TablePagination
+                className="pt-3 border-top mt-3"
+                totalItems={totalItems}
+                rangeStart={rangeStart}
+                rangeEnd={rangeEnd}
+                safePage={safePage}
+                totalPages={totalPages}
+                onPageChange={setPage}
+              />
             </CardBody>
           </Card>
         </Col>

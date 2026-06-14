@@ -10,6 +10,8 @@ let getSnapshotFn: (() => unknown) | null = null
 let supabasePersistFn: (() => Promise<void>) | null = null
 let supabaseSaveInFlight = false
 let fastSaveInFlight = false
+/** Only write to Supabase after local edits — prevents open tabs overwriting cleared data */
+let storeDirty = false
 
 const MUTATING_ARRAY_METHODS = new Set([
   'push',
@@ -21,8 +23,22 @@ const MUTATING_ARRAY_METHODS = new Set([
   'reverse',
 ])
 
+export function markStoreDirty(): void {
+  storeDirty = true
+}
+
+/** Call after loading fresh data from Supabase — blocks stale auto-save */
+export function clearStoreDirty(): void {
+  storeDirty = false
+  if (persistTimer) {
+    clearTimeout(persistTimer)
+    persistTimer = null
+  }
+}
+
 export function schedulePersist(): void {
   if (!getSnapshotFn || typeof window === 'undefined') return
+  storeDirty = true
   if (persistTimer) clearTimeout(persistTimer)
   persistTimer = setTimeout(flushPersist, DEBOUNCE_MS)
 }
@@ -51,6 +67,11 @@ export function hasPendingPersist(): boolean {
 
 export function registerSupabasePersistHandler(handler: () => Promise<void>): void {
   supabasePersistFn = handler
+  // Supabase: save only on explicit edits (schedulePersist), not every 2s
+  if (autoSaveTimer) {
+    clearInterval(autoSaveTimer)
+    autoSaveTimer = null
+  }
 }
 
 export function flushPersist(): void {
@@ -66,6 +87,7 @@ export function flushPersist(): void {
   }
 
   if (!supabasePersistFn) return
+  if (!storeDirty) return
   void runSupabasePersist()
 }
 
@@ -82,6 +104,7 @@ export async function flushPersistAsync(): Promise<void> {
     return
   }
 
+  storeDirty = true
   await runSupabasePersist(true)
 }
 
@@ -97,6 +120,7 @@ async function runSupabasePersist(rethrow = false): Promise<void> {
   supabaseSaveInFlight = true
   try {
     await supabasePersistFn()
+    storeDirty = false
   } catch (error) {
     console.warn('[HMS] Failed to persist store to Supabase', error)
     if (rethrow) throw error
@@ -140,8 +164,11 @@ export function registerHmsStorePersistence(getSnapshot: () => unknown): void {
 
   if (typeof window === 'undefined') return
 
-  window.addEventListener('beforeunload', flushPersist)
+  window.addEventListener('beforeunload', () => {
+    if (storeDirty) flushPersist()
+  })
 
+  // localStorage-only mode: periodic backup; Supabase mode disables this in registerSupabasePersistHandler
   if (autoSaveTimer) clearInterval(autoSaveTimer)
   autoSaveTimer = setInterval(flushPersist, AUTO_SAVE_MS)
 }

@@ -13,26 +13,49 @@ import {
   estimatePrescriptionTotalFee,
   generateId,
   getInpatientMedicinePaymentSummary,
-  getNursingInpatientMedicineRequests,
+  getInpatientMedicinePaymentStatus,
+  getInpatientMedicineOrderedByLabel,
+  getInpatientMedicineRequests,
   getPatientById,
   getPrescriptionDispenseBilling,
   inventoryItems,
   isInpatientMedicineActive,
   isInpatientMedicinePaymentCollected,
+  isInpatientMedicineSentToReception,
   approveInpatientMedicineAtPharmacy,
+  sendInpatientMedicineToReceptionAtPharmacy,
+  collectInpatientMedicinePaymentAtPharmacy,
   processPrescriptionDispense,
   prescriptions as storePrescriptions,
   stockTransactions,
   syncMedicineStatusForInventoryItem,
   persistInpatientMedicineApprovalNowAsync,
+  persistInpatientMedicinePaymentNowAsync,
   persistPharmacyDispenseNowAsync,
 } from '@/shared/services/hmsStore'
-import type { Prescription } from '@/shared/types'
+import type { InpatientMedicinePaymentStatus, Prescription } from '@/shared/types'
 import { refreshVisitWorkflow } from '@/shared/utils/visitConsultation'
 
 const PAGE_SIZE = 10
 
 type StatusFilter = 'active' | 'inactive'
+
+const paymentStatusLabel: Record<InpatientMedicinePaymentStatus, string> = {
+  awaiting_payment: 'Awaiting payment',
+  at_reception: 'At reception',
+  paid_cash: 'Paid (cash)',
+  credit_book: 'Credit book',
+}
+
+const paymentStatusVariant: Record<
+  InpatientMedicinePaymentStatus,
+  { bg: string; text: string }
+> = {
+  awaiting_payment: { bg: 'warning-subtle', text: 'warning' },
+  at_reception: { bg: 'info-subtle', text: 'info' },
+  paid_cash: { bg: 'success-subtle', text: 'success' },
+  credit_book: { bg: 'primary-subtle', text: 'primary' },
+}
 
 const findInventoryItem = (medicineName: string) => {
   const lower = medicineName.toLowerCase()
@@ -56,9 +79,9 @@ const PrescriptionsPage = () => {
 
   const refresh = () => setTick((t) => t + 1)
 
-  const nursingInpatientRequests = useMemo(
+  const inpatientRequests = useMemo(
     () =>
-      getNursingInpatientMedicineRequests().filter(
+      getInpatientMedicineRequests().filter(
         (p) => p.status === 'Pending' || p.status === 'Approved',
       ),
     [tick, dataVersion, storePrescriptions.length],
@@ -66,7 +89,7 @@ const PrescriptionsPage = () => {
 
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim()
-    return nursingInpatientRequests.filter((rx) => {
+    return inpatientRequests.filter((rx) => {
       const isActive = isInpatientMedicineActive(rx)
       if (statusFilter === 'active' && !isActive) return false
       if (statusFilter === 'inactive' && isActive) return false
@@ -79,7 +102,7 @@ const PrescriptionsPage = () => {
         .toLowerCase()
       return hay.includes(q)
     })
-  }, [nursingInpatientRequests, search, statusFilter])
+  }, [inpatientRequests, search, statusFilter])
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const safePage = Math.min(page, totalPages)
@@ -100,14 +123,21 @@ const PrescriptionsPage = () => {
     if (page > totalPages) setPage(totalPages)
   }, [page, totalPages])
 
-  const activeCount = nursingInpatientRequests.filter((p) => isInpatientMedicineActive(p)).length
-  const inactiveCount = nursingInpatientRequests.length - activeCount
+  const activeCount = inpatientRequests.filter((p) => isInpatientMedicineActive(p)).length
+  const inactiveCount = inpatientRequests.length - activeCount
 
   const modalSummary = selected ? getInpatientMedicinePaymentSummary(selected) : null
   const modalBilling = selected ? getPrescriptionDispenseBilling(selected) : null
   const modalPatient = selected ? getPatientById(selected.patientId) : undefined
   const modalPaid = selected ? isInpatientMedicinePaymentCollected(selected) : false
+  const modalPaymentStatus = selected ? getInpatientMedicinePaymentStatus(selected) : null
   const canApprove = selected?.status === 'Pending'
+  const canSendToReception =
+    selected?.status === 'Approved' && !modalPaid && !isInpatientMedicineSentToReception(selected)
+  const canCollectAtPharmacy =
+    selected?.status === 'Approved' &&
+    !modalPaid &&
+    !isInpatientMedicineSentToReception(selected)
   const canDispense = selected?.status === 'Approved' && modalPaid
 
   const approve = async () => {
@@ -126,6 +156,56 @@ const PrescriptionsPage = () => {
       refresh()
     } catch {
       setMessage({ type: 'danger', text: 'Approved locally but database save failed.' })
+      refresh()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const sendToReception = async () => {
+    if (!selected || !user?.id) return
+    setSaving(true)
+    setMessage(null)
+    try {
+      const result = sendInpatientMedicineToReceptionAtPharmacy(selected.id, user.id)
+      if (!result.ok) {
+        setMessage({ type: 'danger', text: result.error ?? 'Could not send to reception.' })
+        return
+      }
+      if (isSupabase) await persistInpatientMedicineApprovalNowAsync()
+      setMessage({
+        type: 'success',
+        text: 'Sent to reception — appears in Inpatient billing table. Pharmacy shows "At reception".',
+      })
+      setSelected(null)
+      refresh()
+    } catch {
+      setMessage({ type: 'danger', text: 'Sent locally but database save failed.' })
+      refresh()
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const collectAtPharmacy = async () => {
+    if (!selected || !user?.id) return
+    setSaving(true)
+    setMessage(null)
+    try {
+      const result = collectInpatientMedicinePaymentAtPharmacy(selected.id, user.id)
+      if (!result.ok) {
+        setMessage({ type: 'danger', text: result.error ?? 'Could not collect payment.' })
+        return
+      }
+      if (isSupabase) await persistInpatientMedicinePaymentNowAsync()
+      setMessage({
+        type: 'success',
+        text: 'Payment collected at pharmacy — not sent to reception. You can dispense now.',
+      })
+      setSelected(storePrescriptions.find((p) => p.id === selected.id) ?? null)
+      refresh()
+    } catch {
+      setMessage({ type: 'danger', text: 'Payment saved locally but database sync failed.' })
       refresh()
     } finally {
       setSaving(false)
@@ -168,6 +248,7 @@ const PrescriptionsPage = () => {
         type: 'Dispense',
         quantity: qty,
         unitPrice: inv.unitPrice,
+        unitCost: inv.purchasePrice ?? 0,
         reference: rx.id,
         notes: `Dispensed to ${patient.fullName}`,
         createdAt: new Date().toISOString(),
@@ -205,7 +286,7 @@ const PrescriptionsPage = () => {
       <PageMetaData title="Inpatient Medicine Requests" />
       <PageHeader
         title="Inpatient Medicine Requests"
-        subtitle="Payment collected at reception — pharmacy dispenses medicine when paid"
+        subtitle="Doctor & nursing prescriptions — approve, collect payment or send to reception, then dispense"
         breadcrumbs={[
           { label: 'HMS', href: '/hms/dashboard' },
           { label: 'Pharmacy', href: '/hms/pharmacy/dashboard' },
@@ -253,8 +334,8 @@ const PrescriptionsPage = () => {
             </Col>
           </Row>
           <p className="text-muted small mb-0 mt-2">
-            <strong>Active</strong> = awaiting payment at reception · <strong>Inactive</strong> =
-            payment collected — click a row for details
+            <strong>Active</strong> = awaiting payment · <strong>Inactive</strong> = paid or on credit
+            book — payment status shows cash, credit, or at reception
           </p>
         </CardBody>
       </Card>
@@ -266,28 +347,26 @@ const PrescriptionsPage = () => {
               <thead className="bg-light bg-opacity-50">
                 <tr>
                   <th>Patient</th>
-                  <th>Phone</th>
-                  <th>Patient ID</th>
+                  <th>Ordered by</th>
                   <th>Medicines</th>
                   <th className="text-end">Total</th>
-                  <th className="text-end">Paid</th>
-                  <th className="text-end">Remaining</th>
-                  <th>Payment</th>
+                  <th>Payment status</th>
                   <th>Dispense</th>
                 </tr>
               </thead>
               <tbody>
                 {pageItems.length === 0 ? (
                   <tr>
-                    <td colSpan={9} className="text-center text-muted py-5">
+                    <td colSpan={6} className="text-center text-muted py-5">
                       No inpatient medicine requests match your filters.
                     </td>
                   </tr>
                 ) : (
                   pageItems.map((rx) => {
                     const patient = getPatientById(rx.patientId)
-                    const { total, paid, remaining } = getInpatientMedicinePaymentSummary(rx)
-                    const isActive = isInpatientMedicineActive(rx)
+                    const { total } = getInpatientMedicinePaymentSummary(rx)
+                    const payStatus = getInpatientMedicinePaymentStatus(rx)
+                    const variant = paymentStatusVariant[payStatus]
                     return (
                       <tr
                         key={rx.id}
@@ -296,29 +375,17 @@ const PrescriptionsPage = () => {
                         onClick={() => setSelected(rx)}
                       >
                         <td className="fw-medium">{patient?.fullName ?? '—'}</td>
-                        <td className="small">{patient?.phone ?? '—'}</td>
-                        <td className="small">{patient?.id ?? '—'}</td>
-                        <td className="small" style={{ maxWidth: 200 }}>
+                        <td className="small">{getInpatientMedicineOrderedByLabel(rx)}</td>
+                        <td className="small" style={{ maxWidth: 220 }}>
                           {rx.items.map((i) => i.medicine).join(', ')}
                         </td>
                         <td className="text-end">
                           {currency}
                           {total.toFixed(2)}
                         </td>
-                        <td className="text-end text-success">
-                          {currency}
-                          {paid.toFixed(2)}
-                        </td>
-                        <td className="text-end text-danger">
-                          {currency}
-                          {remaining.toFixed(2)}
-                        </td>
                         <td>
-                          <Badge
-                            bg={isActive ? 'warning-subtle' : 'success-subtle'}
-                            text={isActive ? 'warning' : 'success'}
-                          >
-                            {isActive ? 'Active' : 'Inactive'}
+                          <Badge bg={variant.bg} text={variant.text}>
+                            {paymentStatusLabel[payStatus]}
                           </Badge>
                         </td>
                         <td>
@@ -398,11 +465,19 @@ const PrescriptionsPage = () => {
                     </Col>
                   </Row>
                   <div className="mt-2 d-flex flex-wrap gap-2">
-                    <Badge bg={isInpatientMedicineActive(selected) ? 'warning-subtle' : 'success-subtle'} text={isInpatientMedicineActive(selected) ? 'warning' : 'success'}>
-                      {isInpatientMedicineActive(selected) ? 'Active — awaiting reception payment' : 'Inactive — payment collected'}
-                    </Badge>
+                    {modalPaymentStatus && (
+                      <Badge
+                        bg={paymentStatusVariant[modalPaymentStatus].bg}
+                        text={paymentStatusVariant[modalPaymentStatus].text}
+                      >
+                        {paymentStatusLabel[modalPaymentStatus]}
+                      </Badge>
+                    )}
+                    <span className="small text-muted">
+                      Ordered by {getInpatientMedicineOrderedByLabel(selected)}
+                    </span>
                     {modalBilling === 'inpatient_credit_book' && (
-                      <Badge bg="info-subtle" text="info">Credit book</Badge>
+                      <Badge bg="info-subtle" text="info">Credit book patient</Badge>
                     )}
                     {modalBilling === 'inpatient_cash' && (
                       <Badge bg="success-subtle" text="success">Cash inpatient</Badge>
@@ -452,14 +527,22 @@ const PrescriptionsPage = () => {
 
               {selected.status === 'Pending' && (
                 <Alert variant="info" className="small">
-                  Review medicines and click <strong>Approved</strong> to send to reception for
-                  payment.
+                  Review medicines and click <strong>Approve</strong>. Patient pays at pharmacy or
+                  you send them to reception cashier.
                 </Alert>
               )}
               {selected.status === 'Approved' && !modalPaid && (
                 <Alert variant="warning" className="small">
-                  Payment must be collected at <strong>Reception → Inpatient Medicine</strong> before
-                  dispensing.
+                  <strong>Collect Payment</strong> — pharmacy takes payment here (reception will not
+                  see this charge). <strong>Send to Reception</strong> — charge appears in{' '}
+                  <strong>Inpatient billing</strong> for the cashier.
+                </Alert>
+              )}
+              {selected.status === 'Approved' && modalPaid && (
+                <Alert variant="success" className="small">
+                  Payment settled
+                  {modalPaymentStatus === 'credit_book' ? ' on credit book' : ' (cash)'} — dispense
+                  medicine now.
                 </Alert>
               )}
             </>
@@ -472,7 +555,19 @@ const PrescriptionsPage = () => {
           {canApprove && (
             <Button variant="primary" disabled={saving} onClick={() => void approve()}>
               <IconifyIcon icon="solar:check-circle-broken" className="me-1" />
-              {saving ? 'Approving...' : 'Approved'}
+              {saving ? 'Approving...' : 'Approve'}
+            </Button>
+          )}
+          {canCollectAtPharmacy && (
+            <Button variant="success" disabled={saving} onClick={() => void collectAtPharmacy()}>
+              <IconifyIcon icon="solar:wallet-money-broken" className="me-1" />
+              {saving ? 'Collecting...' : 'Collect Payment'}
+            </Button>
+          )}
+          {canSendToReception && (
+            <Button variant="warning" disabled={saving} onClick={() => void sendToReception()}>
+              <IconifyIcon icon="solar:transfer-horizontal-broken" className="me-1" />
+              {saving ? 'Sending...' : 'Send to Reception'}
             </Button>
           )}
           {canDispense && (

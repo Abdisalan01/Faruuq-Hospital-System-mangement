@@ -4,12 +4,14 @@ import { Alert, Badge, Button, Card, CardBody, Col, Form, Row, Table } from 'rea
 import PageMetaData from '@/components/PageTitle'
 import IconifyIcon from '@/components/wrappers/IconifyIcon'
 import AddSupplyRequestModal from '@/features/pharmacy/components/AddSupplyRequestModal'
+import { useAuthContext } from '@/context/useAuthContext'
 import { useHmsStoreContext } from '@/context/HmsStoreContext'
 import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
 import StatCard from '@/shared/components/StatCard'
 import StatusBadge from '@/shared/components/StatusBadge'
 import {
+  deliverDepartmentSupplyRequest,
   departmentSupplyRequests,
   getStaffById,
   persistSupplyRequestNowAsync,
@@ -20,7 +22,7 @@ import type { SupplyRequestDepartment } from '@/shared/types'
 const PAGE_SIZE = 8
 const ALLOWED_DEPARTMENTS: SupplyRequestDepartment[] = ['Doctor', 'Emergency', 'Laboratory', 'Nursing']
 
-type StatusFilter = 'all' | 'Pending' | 'Approved'
+type StatusFilter = 'all' | 'Pending' | 'Approved' | 'Delivered'
 type DepartmentFilter = 'all' | SupplyRequestDepartment
 
 const DEPARTMENT_COLORS: Record<SupplyRequestDepartment, { badge: string; text: string }> = {
@@ -31,6 +33,7 @@ const DEPARTMENT_COLORS: Record<SupplyRequestDepartment, { badge: string; text: 
 }
 
 const PharmacySupplyRequestsPage = () => {
+  const { user } = useAuthContext()
   const { isSupabase, dataVersion } = useHmsStoreContext()
   const [tick, setTick] = useState(0)
   const refresh = () => setTick((t) => t + 1)
@@ -53,7 +56,8 @@ const PharmacySupplyRequestsPage = () => {
   const stats = useMemo(() => {
     const pending = requests.filter((r) => r.status === 'Pending').length
     const approved = requests.filter((r) => r.status === 'Approved').length
-    return { pending, approved, total: requests.length }
+    const delivered = requests.filter((r) => r.status === 'Delivered').length
+    return { pending, approved, delivered, total: requests.length }
   }, [requests])
 
   const filtered = useMemo(() => {
@@ -102,6 +106,22 @@ const PharmacySupplyRequestsPage = () => {
     refresh()
   }
 
+  const deliver = async (id: string) => {
+    const result = deliverDepartmentSupplyRequest(id, user?.id ?? 'staff-006')
+    if (!result.ok) {
+      setMessage(result.error ?? 'Could not deliver.')
+      return
+    }
+
+    try {
+      if (isSupabase) await persistSupplyRequestNowAsync()
+      setMessage(`Items delivered and stock deducted.${isSupabase ? ' Saved to database.' : ''}`)
+    } catch {
+      setMessage('Delivered locally but database save failed.')
+    }
+    refresh()
+  }
+
   const getRequesterDisplay = (req: (typeof requests)[number]) => {
     if (req.requesterName?.trim()) return req.requesterName.trim()
     const staff = getStaffById(req.requesterId)
@@ -136,7 +156,8 @@ const PharmacySupplyRequestsPage = () => {
 
       <Row className="mb-3">
         <StatCard title="Pending" value={stats.pending} icon="solar:clock-circle-broken" variant="warning" />
-        <StatCard title="Approved" value={stats.approved} icon="solar:check-circle-broken" variant="success" />
+        <StatCard title="Approved" value={stats.approved} icon="solar:check-circle-broken" variant="info" />
+        <StatCard title="Delivered" value={stats.delivered} icon="solar:delivery-broken" variant="success" />
         <StatCard title="Total Requests" value={stats.total} icon="solar:box-broken" variant="primary" />
       </Row>
 
@@ -159,6 +180,7 @@ const PharmacySupplyRequestsPage = () => {
                     ['all', 'All'],
                     ['Pending', 'Pending'],
                     ['Approved', 'Approved'],
+                    ['Delivered', 'Delivered'],
                   ] as const
                 ).map(([key, label]) => (
                   <Button
@@ -250,8 +272,17 @@ const PharmacySupplyRequestsPage = () => {
                               <IconifyIcon icon="solar:check-circle-broken" className="me-1" />
                               Approve
                             </Button>
+                          ) : req.status === 'Approved' ? (
+                            <Button
+                              size="sm"
+                              variant="outline-success"
+                              onClick={() => void deliver(req.id)}
+                            >
+                              <IconifyIcon icon="solar:delivery-broken" className="me-1" />
+                              Deliver
+                            </Button>
                           ) : (
-                            <span className="text-muted small">—</span>
+                            <span className="text-muted small">Completed</span>
                           )}
                         </td>
                       </tr>

@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { Card, CardBody, Col, Row, Table } from 'react-bootstrap'
 import { Link, useParams } from 'react-router-dom'
 
@@ -6,6 +7,8 @@ import { currency } from '@/context/constants'
 import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
 import StatusBadge from '@/shared/components/StatusBadge'
+import TablePagination from '@/shared/components/TablePagination'
+import { useTablePagination } from '@/shared/hooks/useTablePagination'
 import { getPatientCareDisplayStatusFromPatient } from '@/shared/utils/visitConsultation'
 import {
   getDepartmentById,
@@ -19,7 +22,20 @@ const PatientDetailPage = () => {
   const { id } = useParams<{ id: string }>()
   const patient = id ? getPatientById(id) : undefined
   const account = patient ? getPatientAccount(patient.id) : undefined
-  const patientVisits = patient ? visits.filter((v) => v.patientId === patient.id) : []
+  const patientVisits = useMemo(
+    () => (patient ? visits.filter((v) => v.patientId === patient.id) : []),
+    [patient?.id, visits.length],
+  )
+
+  const {
+    pageItems: visitPageItems,
+    setPage: setVisitPage,
+    safePage: visitPage,
+    totalPages: visitTotalPages,
+    rangeStart: visitRangeStart,
+    rangeEnd: visitRangeEnd,
+    totalItems: visitTotalItems,
+  } = useTablePagination(patientVisits, 10, [patientVisits.length, patient?.id])
 
   if (!patient) {
     return (
@@ -118,7 +134,7 @@ const PatientDetailPage = () => {
                     </td>
                   </tr>
                 ) : (
-                  patientVisits.map((visit) => {
+                  visitPageItems.map((visit) => {
                     const doctor = getStaffById(visit.assignedDoctorId)
                     const dept = getDepartmentById(visit.departmentId)
                     const doctorLabel = visit.isEmergency
@@ -139,6 +155,15 @@ const PatientDetailPage = () => {
               </tbody>
             </Table>
           </div>
+          <TablePagination
+            className="pt-3 border-top mt-3"
+            totalItems={visitTotalItems}
+            rangeStart={visitRangeStart}
+            rangeEnd={visitRangeEnd}
+            safePage={visitPage}
+            totalPages={visitTotalPages}
+            onPageChange={setVisitPage}
+          />
         </CardBody>
       </Card>
     </PermissionGuard>

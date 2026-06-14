@@ -4,6 +4,8 @@ import { Alert, Badge, Button, Card, CardBody, Col, Form, Row, Table } from 'rea
 import IconifyIcon from '@/components/wrappers/IconifyIcon'
 import SupplyItemPicker from '@/shared/components/SupplyItemPicker'
 import StatusBadge from '@/shared/components/StatusBadge'
+import TablePagination from '@/shared/components/TablePagination'
+import { useTablePagination } from '@/shared/hooks/useTablePagination'
 import { useHmsStoreContext } from '@/context/HmsStoreContext'
 import {
   departmentSupplyRequests,
@@ -50,6 +52,14 @@ const DepartmentSupplyRequestForm = ({
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
     [department, requesterId, departmentSupplyRequests.length, tick, dataVersion],
   )
+
+  const myRequestsPagination = useTablePagination(myRequests, 10, [
+    myRequests.length,
+    department,
+    requesterId,
+    tick,
+    dataVersion,
+  ])
 
   const updateLine = (index: number, field: keyof SupplyLine, value: string | number) => {
     setLines((prev) => prev.map((l, i) => (i === index ? { ...l, [field]: value } : l)))
@@ -255,7 +265,8 @@ const DepartmentSupplyRequestForm = ({
                   <p className="mb-0">No supply requests yet.</p>
                 </div>
               ) : (
-                <div className="table-responsive">
+                <>
+                  <div className="table-responsive">
                   <Table hover size="sm" className="mb-0 align-middle">
                     <thead className="bg-light bg-opacity-50">
                       <tr>
@@ -266,7 +277,7 @@ const DepartmentSupplyRequestForm = ({
                       </tr>
                     </thead>
                     <tbody>
-                      {myRequests.map((r) => (
+                      {myRequestsPagination.pageItems.map((r) => (
                         <tr key={r.id}>
                           <td className="small">{new Date(r.createdAt).toLocaleString()}</td>
                           <td className="small">{r.requesterName ?? '—'}</td>
@@ -283,6 +294,16 @@ const DepartmentSupplyRequestForm = ({
                     </tbody>
                   </Table>
                 </div>
+                <TablePagination
+                  className="pt-3 border-top mt-3"
+                  totalItems={myRequestsPagination.totalItems}
+                  rangeStart={myRequestsPagination.rangeStart}
+                  rangeEnd={myRequestsPagination.rangeEnd}
+                  safePage={myRequestsPagination.safePage}
+                  totalPages={myRequestsPagination.totalPages}
+                  onPageChange={myRequestsPagination.setPage}
+                />
+                </>
               )}
             </CardBody>
           </Card>

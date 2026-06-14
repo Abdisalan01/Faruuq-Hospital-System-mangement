@@ -2,7 +2,6 @@
   AccountTransaction,
   Admission,
   AdmissionRequest,
-  InpatientBillingMode,
   InpatientChargeRow,
   InpatientUnpaidAlert,
   Bed,
@@ -25,10 +24,13 @@
   LabTestCatalog,
   LabTestCategory,
   LabTestItem,
-  LabSampleType,
   MedicineCatalogItem,
   MedicationAdministration,
   NursingNote,
+  ObstetricDelivery,
+  ObstetricChildGender,
+  DoctorCommissionPayout,
+  DoctorFinancialReport,
   Patient,
   PatientAccount,
   PatientHistoryEntry,
@@ -40,6 +42,7 @@
   Payment,
   Prescription,
   PrescriptionItem,
+  InpatientMedicinePaymentStatus,
   ReceptionReceipt,
   Room,
   StaffUser,
@@ -72,6 +75,7 @@ import {
 import {
   createEmptyHmsSnapshot,
   DEFAULT_SYSTEM_SETTINGS,
+  mergeSystemSettingsDeep,
   ensureBootstrapStaffInSnapshot,
   EMPTY_ACCOUNT_TRANSACTIONS,
   EMPTY_ADMISSION_REQUESTS,
@@ -83,6 +87,7 @@ import {
   EMPTY_DIAGNOSES,
   EMPTY_DISCOUNTS,
   EMPTY_DOCTOR_ORDERS,
+  EMPTY_DOCTOR_COMMISSION_PAYOUTS,
   EMPTY_EMERGENCY_CASES,
   EMPTY_EXPENSE_RECORDS,
   EMPTY_INCOME_RECORDS,
@@ -95,6 +100,7 @@ import {
   EMPTY_NURSING_NOTES,
   EMPTY_PATIENT_ACCOUNTS,
   EMPTY_PATIENT_DISCOUNTS,
+  EMPTY_OBSTETRIC_DELIVERIES,
   EMPTY_PATIENTS,
   EMPTY_PAYMENTS,
   EMPTY_PHARMACY_SUPPLY_REQUESTS,
@@ -114,6 +120,7 @@ import {
   saveLabCatalogSnapshotToSupabase,
   saveLabFeePaymentSnapshotToSupabase,
   saveLabRequestSnapshotToSupabase,
+  savePatientReleaseSnapshotToSupabase,
   saveInpatientPaymentSnapshotToSupabase,
   savePatientDiscountSnapshotToSupabase,
   saveSurgeryFeePaymentSnapshotToSupabase,
@@ -133,6 +140,8 @@ import {
   saveCreditPaymentSnapshotToSupabase,
   saveSupplyRequestSnapshotToSupabase,
   saveFullMirrorSnapshotToSupabase,
+  saveObstetricDeliverySnapshotToSupabase,
+  saveDoctorCommissionPayoutSnapshotToSupabase,
 } from './hmsSupabaseSync'
 import { normalizeStaffUserEmail } from './passwordUtils'
 
@@ -143,10 +152,16 @@ const today = () => todayIsoLocal()
 
 let hmsStoreRevision = 0
 let onSupabaseSaved: ((savedAt: string) => void) | null = null
+let onStoreChanged: (() => void) | null = null
 
 /** HmsStoreContext uses this to avoid poll overwriting a just-saved write */
 export function registerSupabaseSaveNotifier(fn: (savedAt: string) => void): void {
   onSupabaseSaved = fn
+}
+
+/** React dashboards re-render when in-memory store mutates (cancel lab, etc.) */
+export function registerStoreChangeNotifier(fn: () => void): void {
+  onStoreChanged = fn
 }
 
 /** Bumps when snapshot is applied from Supabase — use to trigger UI refresh */
@@ -266,6 +281,19 @@ export function getActiveLabTests(category?: LabTestCategory): LabTestCatalog[] 
     .sort((a, b) => a.category.localeCompare(b.category) || a.testName.localeCompare(b.testName))
 }
 
+function normalizeLabTestCatalogItem(item: LabTestCatalog): LabTestCatalog {
+  const unitReference =
+    item.unitReference?.trim() ||
+    item.normalRange?.trim() ||
+    item.unit?.trim() ||
+    undefined
+  return {
+    ...item,
+    unitReference,
+    isActive: item.isActive ?? true,
+  }
+}
+
 export function saveLabTestCatalogEntry(
   data: {
     id?: string
@@ -273,22 +301,22 @@ export function saveLabTestCatalogEntry(
     testName: string
     category: LabTestCategory
     price: number
-    isActive: boolean
-    description?: string
-    normalRange?: string
-    unit?: string
-    sampleType?: LabSampleType
-    turnaroundTime?: string
+    isActive?: boolean
+    unitReference?: string
   },
 ): LabTestCatalog {
   const testId = data.testId.trim() || generateLabTestCode()
   const testName = data.testName.trim()
   if (!testName) throw new Error('Test name is required')
+  if (data.price < 0 || Number.isNaN(data.price)) throw new Error('Price must be a valid non-negative number')
 
   const duplicateId = labTestCatalog.find(
     (t) => t.testId.toLowerCase() === testId.toLowerCase() && t.id !== data.id,
   )
   if (duplicateId) throw new Error(`Test ID "${testId}" already exists`)
+
+  const unitReference = data.unitReference?.trim() || undefined
+  const now = new Date().toISOString()
 
   if (data.id) {
     const existing = labTestCatalog.find((t) => t.id === data.id)
@@ -297,12 +325,9 @@ export function saveLabTestCatalogEntry(
       existing.testName = testName
       existing.category = data.category
       existing.price = data.price
-      existing.isActive = data.isActive
-      existing.description = data.description?.trim() || undefined
-      existing.normalRange = data.normalRange?.trim() || undefined
-      existing.unit = data.unit?.trim() || undefined
-      existing.sampleType = data.sampleType
-      existing.turnaroundTime = data.turnaroundTime?.trim() || undefined
+      existing.isActive = data.isActive ?? true
+      existing.unitReference = unitReference
+      existing.lastModifiedAt = now
       syncLabTestCodeCounterFromCatalog()
       schedulePersist()
       return existing
@@ -315,18 +340,24 @@ export function saveLabTestCatalogEntry(
     testName,
     category: data.category,
     price: data.price,
-    isActive: data.isActive,
-    description: data.description?.trim() || undefined,
-    normalRange: data.normalRange?.trim() || undefined,
-    unit: data.unit?.trim() || undefined,
-    sampleType: data.sampleType,
-    turnaroundTime: data.turnaroundTime?.trim() || undefined,
-    createdAt: new Date().toISOString().split('T')[0],
+    isActive: data.isActive ?? true,
+    unitReference,
+    createdAt: now.split('T')[0],
+    lastModifiedAt: now,
   }
   labTestCatalog.push(entry)
   syncLabTestCodeCounterFromCatalog()
   schedulePersist()
   return entry
+}
+
+export function deleteLabTestCatalogEntry(id: string): void {
+  const index = labTestCatalog.findIndex((t) => t.id === id)
+  if (index < 0) throw new Error('Lab test not found')
+  labTestCatalog.splice(index, 1)
+  syncLabTestCodeCounterFromCatalog()
+  hmsStoreRevision += 1
+  schedulePersist()
 }
 
 export function formatSurgeryCode(number: number): string {
@@ -408,6 +439,8 @@ export function saveSurgeryCatalogEntry(
   )
   if (duplicateId) throw new Error(`Surgery ID "${surgeryId}" already exists`)
 
+  const now = new Date().toISOString()
+
   if (data.id) {
     const existing = surgeryCatalog.find((s) => s.id === data.id)
     if (existing) {
@@ -423,6 +456,7 @@ export function saveSurgeryCatalogEntry(
       existing.requiredEquipment = data.requiredEquipment?.trim() || undefined
       existing.preOpInstructions = data.preOpInstructions?.trim() || undefined
       existing.postOpCare = data.postOpCare?.trim() || undefined
+      existing.lastModifiedAt = now
       syncSurgeryCodeCounterFromCatalog()
       schedulePersist()
       return existing
@@ -443,7 +477,8 @@ export function saveSurgeryCatalogEntry(
     requiredEquipment: data.requiredEquipment?.trim() || undefined,
     preOpInstructions: data.preOpInstructions?.trim() || undefined,
     postOpCare: data.postOpCare?.trim() || undefined,
-    createdAt: new Date().toISOString().split('T')[0],
+    createdAt: now.split('T')[0],
+    lastModifiedAt: now,
   }
   surgeryCatalog.push(entry)
   syncSurgeryCodeCounterFromCatalog()
@@ -457,6 +492,7 @@ export function deleteSurgeryCatalogEntry(id: string): void {
   const index = surgeryCatalog.findIndex((s) => s.id === id)
   if (index >= 0) surgeryCatalog.splice(index, 1)
   syncSurgeryCodeCounterFromCatalog()
+  hmsStoreRevision += 1
   schedulePersist()
 }
 
@@ -499,7 +535,10 @@ export type SaveMedicineCatalogInput = {
   medicineId?: string
 }
 
-export function saveMedicineCatalogEntry(input: SaveMedicineCatalogInput): MedicineCatalogItem {
+export function saveMedicineCatalogEntry(
+  input: SaveMedicineCatalogInput,
+  options?: { skipSchedulePersist?: boolean },
+): MedicineCatalogItem {
   const trimmedName = input.name.trim()
   if (!trimmedName) throw new Error('Medicine name is required')
 
@@ -521,6 +560,7 @@ export function saveMedicineCatalogEntry(input: SaveMedicineCatalogInput): Medic
   if (duplicateCode) throw new Error(`Medicine code "${code}" already exists`)
 
   const isActive = deriveMedicineActiveStatus(input.quantityInStock)
+  const now = new Date().toISOString()
 
   if (catalog) {
     catalog.medicineId = code
@@ -531,6 +571,7 @@ export function saveMedicineCatalogEntry(input: SaveMedicineCatalogInput): Medic
     catalog.purchasePrice = input.purchasePrice
     catalog.category = input.category
     catalog.isActive = isActive
+    catalog.lastModifiedAt = now
   } else {
     catalog = {
       id: generateId('med'),
@@ -542,7 +583,8 @@ export function saveMedicineCatalogEntry(input: SaveMedicineCatalogInput): Medic
       purchasePrice: input.purchasePrice,
       category: input.category,
       isActive,
-      createdAt: new Date().toISOString().split('T')[0],
+      createdAt: now.split('T')[0],
+      lastModifiedAt: now,
     }
     medicineCatalog.push(catalog)
   }
@@ -557,6 +599,7 @@ export function saveMedicineCatalogEntry(input: SaveMedicineCatalogInput): Medic
     stock.reorderLevel = input.reorderLevel
     stock.unitPrice = input.sellingPrice
     stock.purchasePrice = input.purchasePrice
+    stock.lastModifiedAt = now
   } else {
     inventoryItems.push({
       id: generateId('inv'),
@@ -568,16 +611,20 @@ export function saveMedicineCatalogEntry(input: SaveMedicineCatalogInput): Medic
       reorderLevel: input.reorderLevel,
       unitPrice: input.sellingPrice,
       purchasePrice: input.purchasePrice,
-      createdAt: new Date().toISOString().split('T')[0],
+      createdAt: now.split('T')[0],
+      lastModifiedAt: now,
     })
   }
 
   syncMedicineActiveStatus(catalog)
-  schedulePersist()
+  if (!options?.skipSchedulePersist) schedulePersist()
   return catalog
 }
 
-export function deleteMedicineCatalogEntry(id: string): void {
+export function deleteMedicineCatalogEntry(
+  id: string,
+  options?: { skipSchedulePersist?: boolean },
+): void {
   const catalog = medicineCatalog.find((m) => m.id === id)
   if (!catalog) throw new Error('Medicine not found')
 
@@ -590,7 +637,8 @@ export function deleteMedicineCatalogEntry(id: string): void {
     if (invIndex >= 0) inventoryItems.splice(invIndex, 1)
   }
 
-  schedulePersist()
+  hmsStoreRevision += 1
+  if (!options?.skipSchedulePersist) schedulePersist()
 }
 
 export type RestockMedicineInput = {
@@ -601,7 +649,10 @@ export type RestockMedicineInput = {
   reorderLevel?: number
 }
 
-export function restockMedicine(input: RestockMedicineInput): MedicineCatalogItem | undefined {
+export function restockMedicine(
+  input: RestockMedicineInput,
+  options?: { skipSchedulePersist?: boolean },
+): MedicineCatalogItem | undefined {
   const catalog = getMedicineCatalogByMedicineId(input.medicineId)
   if (!catalog || input.addQuantity <= 0) return undefined
 
@@ -622,7 +673,7 @@ export function restockMedicine(input: RestockMedicineInput): MedicineCatalogIte
   }
 
   syncMedicineActiveStatus(catalog)
-  schedulePersist()
+  if (!options?.skipSchedulePersist) schedulePersist()
   return catalog
 }
 
@@ -667,6 +718,8 @@ export let medicineCatalog: MedicineCatalogItem[] = [...EMPTY_MEDICINE_CATALOG]
 export let surgeryCatalog: SurgeryCatalog[] = [...EMPTY_SURGERY_CATALOG]
 export let discounts: Discount[] = [...EMPTY_DISCOUNTS]
 export let patientDiscounts: PatientDiscount[] = [...EMPTY_PATIENT_DISCOUNTS]
+export let obstetricDeliveries: ObstetricDelivery[] = [...EMPTY_OBSTETRIC_DELIVERIES]
+export let doctorCommissionPayouts: DoctorCommissionPayout[] = [...EMPTY_DOCTOR_COMMISSION_PAYOUTS]
 export let admissions: Admission[] = [...EMPTY_ADMISSIONS]
 export let medicationAdministrations: MedicationAdministration[] = [...EMPTY_MEDICATION_ADMINISTRATIONS]
 export let nursingNotes: NursingNote[] = [...EMPTY_NURSING_NOTES]
@@ -677,6 +730,12 @@ export let payments: Payment[] = [...EMPTY_PAYMENTS]
 export let emergencyCases: EmergencyCase[] = [...EMPTY_EMERGENCY_CASES]
 export let incomeRecords: IncomeRecord[] = [...EMPTY_INCOME_RECORDS]
 export let expenseRecords: ExpenseRecord[] = [...EMPTY_EXPENSE_RECORDS]
+export function clearPatientDataResetFlag(): void {
+  delete systemSettings.patientDataClearedAt
+  systemSettings.lastModifiedAt = now()
+  schedulePersist()
+}
+
 export let systemSettings: SystemSettings = JSON.parse(JSON.stringify(DEFAULT_SYSTEM_SETTINGS)) as SystemSettings
 
 // â”€â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -769,35 +828,16 @@ export function getVisitsForDoctorToday(doctorId: string): Visit[] {
   return dedupeVisitsByPatient(todayForDoctor).sort(sortDoctorQueueVisits)
 }
 
-/** Doctor All Patients — one row per patient ID; open visit preferred over released */
+/** Doctor All Patients — one row per patient; today's queue + any open visit from prior days */
 export function getDoctorPatientQueue(doctorId: string): Visit[] {
   const todayStr = today()
-  const candidates = visits.filter((v) => {
+  const relevant = visits.filter((v) => {
     if (v.assignedDoctorId !== doctorId) return false
     if (v.visitDate === todayStr) return true
     return !['Completed', 'Cancelled'].includes(v.status)
   })
 
-  const openPatientIdsToday = new Set(
-    candidates
-      .filter(
-        (v) => v.visitDate === todayStr && !['Completed', 'Cancelled'].includes(v.status),
-      )
-      .map((v) => v.patientId),
-  )
-
-  const filtered = candidates.filter((v) => {
-    if (
-      v.visitDate === todayStr &&
-      ['Completed', 'Cancelled'].includes(v.status) &&
-      openPatientIdsToday.has(v.patientId)
-    ) {
-      return false
-    }
-    return true
-  })
-
-  return dedupeVisitsByPatient(filtered).sort(sortDoctorQueueVisits)
+  return dedupeVisitsByPatient(relevant).sort(sortDoctorQueueVisits)
 }
 
 export function getActiveAdmissionsForDoctor(doctorId: string): Admission[] {
@@ -985,7 +1025,6 @@ export function updateInpatientRoomBedByAdmission(
   admissionId: string,
   roomId: string,
   bedId: string,
-  billingMode: InpatientBillingMode,
 ): { ok: boolean; error?: string; admission?: Admission } {
   const admission = getAdmissionById(admissionId)
   if (!admission || admission.status !== 'Active') {
@@ -994,7 +1033,7 @@ export function updateInpatientRoomBedByAdmission(
 
   const req = getAssignedAdmissionRequestForAdmission(admission)
   if (req) {
-    return updateAdmissionAssignment(req.id, roomId, bedId, billingMode)
+    return updateAdmissionAssignment(req.id, roomId, bedId)
   }
 
   const newBed = beds.find((b) => b.id === bedId && b.roomId === roomId)
@@ -1017,8 +1056,8 @@ export function updateInpatientRoomBedByAdmission(
   admission.roomId = roomId
   admission.bedId = bedId
   admission.wardId = newBed.wardId
-  admission.billingMode = billingMode
-  admission.bookOpen = billingMode === 'credit_book'
+  admission.billingMode = 'credit_book'
+  admission.bookOpen = true
 
   touchHmsStore()
   return { ok: true, admission }
@@ -1028,7 +1067,6 @@ export function updateAdmissionAssignment(
   requestId: string,
   roomId: string,
   bedId: string,
-  billingMode: InpatientBillingMode,
 ): { ok: boolean; error?: string; admission?: Admission } {
   const req = admissionRequests.find((r) => r.id === requestId)
   if (!req || req.status !== 'Assigned') {
@@ -1060,12 +1098,12 @@ export function updateAdmissionAssignment(
   admission.roomId = roomId
   admission.bedId = bedId
   admission.wardId = newBed.wardId
-  admission.billingMode = billingMode
-  admission.bookOpen = billingMode === 'credit_book'
+  admission.billingMode = 'credit_book'
+  admission.bookOpen = true
 
   req.roomId = roomId
   req.bedId = bedId
-  req.billingMode = billingMode
+  req.billingMode = 'credit_book'
 
   touchHmsStore()
   return { ok: true, admission }
@@ -1075,7 +1113,6 @@ export function assignAdmissionRequest(
   requestId: string,
   roomId: string,
   bedId: string,
-  billingMode: InpatientBillingMode,
   receptionId: string,
 ): Admission {
   const req = admissionRequests.find((r) => r.id === requestId)
@@ -1093,8 +1130,8 @@ export function assignAdmissionRequest(
     bedId,
     admittedAt: today(),
     status: 'Active',
-    billingMode,
-    bookOpen: billingMode === 'credit_book',
+    billingMode: 'credit_book',
+    bookOpen: true,
   }
   admissions.push(admission)
 
@@ -1108,7 +1145,7 @@ export function assignAdmissionRequest(
   req.status = 'Assigned'
   req.roomId = roomId
   req.bedId = bedId
-  req.billingMode = billingMode
+  req.billingMode = 'credit_book'
 
   const now = new Date().toISOString()
   if (visit) {
@@ -1116,19 +1153,89 @@ export function assignAdmissionRequest(
   }
 
   touchHmsStore()
-
-  const prepaidNight = billingMode === 'nightly_cash'
-  addAccountCharge(
-    req.patientId,
-    bed.dailyRate,
-    'Room',
-    `${getRoomById(roomId)?.name ?? 'Room'} â€” ${bed.bedNumber} (night 1)`,
-    req.visitId,
-    receptionId,
-    { admissionId: admission.id, settledAtCharge: prepaidNight, referenceId: admission.id, referenceType: 'bed' },
-  )
+  syncInpatientBedNightlyCharges(admission.id, receptionId)
 
   return admission
+}
+
+/** List calendar nights from admission date through end date (inclusive) */
+function formatLocalDateKey(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function listAdmissionBedNights(admittedAt: string, endDate: string): string[] {
+  const startKey = admittedAt.slice(0, 10)
+  const endKey = endDate.slice(0, 10)
+  const start = new Date(`${startKey}T12:00:00`)
+  const end = new Date(`${endKey}T12:00:00`)
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return [startKey]
+
+  const nights: string[] = []
+  const cur = new Date(start)
+  while (cur <= end) {
+    nights.push(formatLocalDateKey(cur))
+    cur.setDate(cur.getDate() + 1)
+  }
+  return nights
+}
+
+function hasBedChargeForNight(admissionId: string, nightDate: string): boolean {
+  const ref = `${admissionId}:${nightDate}`
+  return accountTransactions.some(
+    (t) =>
+      t.admissionId === admissionId &&
+      t.chargeType === 'Room' &&
+      (t.referenceId === ref || t.description.includes(nightDate)),
+  )
+}
+
+function bedChargeDisplayDate(tx: AccountTransaction): string {
+  if (tx.referenceId?.includes(':')) {
+    const night = tx.referenceId.split(':')[1]
+    if (night && /^\d{4}-\d{2}-\d{2}$/.test(night)) return night
+  }
+  return tx.createdAt.split('T')[0]
+}
+
+/** Post one bed fee per night from assignment until today while patient remains active */
+export function syncInpatientBedNightlyCharges(
+  admissionId: string,
+  createdBy = 'system',
+): void {
+  const adm = getAdmissionById(admissionId)
+  if (!adm || adm.status !== 'Active') return
+
+  const bed = beds.find((b) => b.id === adm.bedId)
+  if (!bed) return
+
+  const roomName = getRoomById(adm.roomId)?.name ?? 'Room'
+  const nights = listAdmissionBedNights(adm.admittedAt, today())
+  let posted = false
+
+  nights.forEach((nightDate, index) => {
+    if (hasBedChargeForNight(admissionId, nightDate)) return
+    addAccountCharge(
+      adm.patientId,
+      bed.dailyRate,
+      'Room',
+      `Bed fee — ${roomName}, Bed ${bed.bedNumber} · Night ${index + 1} (${nightDate})`,
+      adm.visitId,
+      createdBy,
+      {
+        admissionId,
+        settledAtCharge: false,
+        referenceId: `${admissionId}:${nightDate}`,
+        referenceType: 'bed',
+        chargeDate: nightDate,
+      },
+    )
+    posted = true
+  })
+
+  if (posted) touchHmsStore()
 }
 
 /** Add tonight's bed fee to credit book (call daily for book patients) */
@@ -1217,6 +1324,8 @@ export function getInpatientBillingLedger(admissionId: string): InpatientChargeR
   const adm = getAdmissionById(admissionId)
   if (!adm) return []
 
+  syncInpatientBedNightlyCharges(admissionId)
+
   const rows: InpatientChargeRow[] = []
 
   for (const tx of getAdmissionLedger(admissionId)) {
@@ -1225,26 +1334,11 @@ export function getInpatientBillingLedger(admissionId: string): InpatientChargeR
       id: tx.id,
       sourceType: tx.referenceType ?? (tx.chargeType === 'Room' ? 'bed' : tx.chargeType === 'Laboratory' ? 'lab' : tx.chargeType === 'Surgery' ? 'surgery' : tx.chargeType === 'Pharmacy' ? 'pharmacy' : 'bed'),
       sourceId: tx.referenceId ?? tx.id,
-      date: tx.createdAt.split('T')[0],
+      date: bedChargeDisplayDate(tx),
       description: tx.description,
       amount: tx.amount,
       status: tx.settledAtCharge ? 'Paid' : 'On book',
       transactionId: tx.id,
-    })
-  }
-
-  const bed = beds.find((b) => b.id === adm.bedId)
-  const roomName = getRoomById(adm.roomId)?.name ?? 'Room'
-
-  if (bed && !hasTonightBedCharge(admissionId)) {
-    rows.push({
-      id: `pending-bed-${admissionId}`,
-      sourceType: 'bed',
-      sourceId: admissionId,
-      date: today(),
-      description: `${roomName} â€” ${bed.bedNumber} (tonight)`,
-      amount: bed.dailyRate,
-      status: 'Pending',
     })
   }
 
@@ -1276,7 +1370,50 @@ export function getInpatientBillingLedger(admissionId: string): InpatientChargeR
     })
   }
 
+  for (const rx of prescriptions.filter(
+    (p) =>
+      p.admissionId === admissionId &&
+      isInpatientMedicineRequest(p) &&
+      p.status === 'Approved' &&
+      isInpatientMedicineSentToReception(p) &&
+      !isInpatientMedicinePaymentCollected(p),
+  )) {
+    if (hasAdmissionChargeReference(admissionId, 'pharmacy', rx.id)) continue
+    rows.push({
+      id: `pending-pharmacy-${rx.id}`,
+      sourceType: 'pharmacy',
+      sourceId: rx.id,
+      date: (rx.sentToReceptionAt ?? rx.createdAt).split('T')[0],
+      description: buildInpatientPharmacyChargeDescription(rx),
+      amount: estimatePrescriptionTotalFee(rx),
+      status: 'Pending',
+    })
+  }
+
   return rows.sort((a, b) => b.date.localeCompare(a.date) || a.description.localeCompare(b.description))
+}
+
+function buildInpatientPharmacyChargeDescription(rx: Prescription): string {
+  return `Prescription — ${rx.items.map((i) => i.medicine).join(', ')}`
+}
+
+function markInpatientPrescriptionPaidFromBilling(
+  rxId: string,
+  receptionId: string,
+  amount: number,
+  paymentMethod: 'Cash' | 'Credit Book',
+): void {
+  const rx = prescriptions.find((p) => p.id === rxId)
+  if (!rx || !isInpatientMedicineRequest(rx)) return
+  if (isInpatientMedicinePaymentCollected(rx)) return
+  const ts = now()
+  rx.totalFee = amount
+  rx.amountPaid = amount
+  rx.paymentCollectedAt = ts
+  rx.collectedByReceptionId = receptionId
+  rx.paymentMethod = paymentMethod
+  rx.lastModifiedAt = ts
+  touchHmsStore()
 }
 
 export function getInpatientOutstandingTotal(admissionId: string): number {
@@ -1387,8 +1524,8 @@ export function applyInpatientChargeToBook(
   receptionId: string,
 ): { ok: boolean; error?: string } {
   const adm = getAdmissionById(admissionId)
-  if (!adm || adm.billingMode !== 'credit_book' || !adm.bookOpen) {
-    return { ok: false, error: 'Credit book is not open for this patient.' }
+  if (!adm) {
+    return { ok: false, error: 'Admission not found.' }
   }
   if (adm.status !== 'Active' && row.status === 'Pending') {
     return { ok: false, error: 'Cannot post new charges after discharge â€” settle existing book items.' }
@@ -1434,6 +1571,37 @@ export function applyInpatientChargeToBook(
     srg.paymentConfirmedAt = now()
     srg.paidByReceptionId = receptionId
     srg.amountPaid = row.amount
+    return { ok: true }
+  }
+
+  if (row.sourceType === 'pharmacy') {
+    const rx = prescriptions.find((p) => p.id === row.sourceId)
+    if (!rx || !isInpatientMedicineRequest(rx)) {
+      return { ok: false, error: 'Prescription not found.' }
+    }
+    if (!isInpatientMedicineSentToReception(rx)) {
+      return { ok: false, error: 'Pharmacy has not sent this prescription to reception.' }
+    }
+    if (isInpatientMedicinePaymentCollected(rx)) {
+      return { ok: false, error: 'Prescription already paid.' }
+    }
+    addAccountCharge(
+      adm.patientId,
+      row.amount,
+      'Pharmacy',
+      row.description,
+      adm.visitId,
+      receptionId,
+      { admissionId, settledAtCharge: false, referenceId: rx.id, referenceType: 'pharmacy' },
+    )
+    if (adm.billingMode === 'credit_book') {
+      markInpatientPrescriptionPaidFromBilling(
+        rx.id,
+        receptionId,
+        row.amount,
+        'Credit Book',
+      )
+    }
     return { ok: true }
   }
 
@@ -1526,6 +1694,35 @@ export function collectInpatientChargeCash(
     return { ok: true, receipt }
   }
 
+  if (row.sourceType === 'pharmacy') {
+    const rx = prescriptions.find((p) => p.id === row.sourceId)
+    if (!rx || !isInpatientMedicineRequest(rx)) {
+      return { ok: false, error: 'Prescription not found.' }
+    }
+    if (!isInpatientMedicineSentToReception(rx)) {
+      return { ok: false, error: 'Pharmacy has not sent this prescription to reception.' }
+    }
+    if (isInpatientMedicinePaymentCollected(rx)) {
+      return { ok: false, error: 'Prescription already paid.' }
+    }
+    addAccountCharge(
+      adm.patientId,
+      row.amount,
+      'Pharmacy',
+      row.description,
+      adm.visitId,
+      receptionId,
+      { admissionId, settledAtCharge: true, referenceId: rx.id, referenceType: 'pharmacy' },
+    )
+    markInpatientPrescriptionPaidFromBilling(rx.id, receptionId, paidTotal, 'Cash')
+    if (!options?.skipPaymentRecord) {
+      recordInpatientPayment(adm, paidTotal, row.description, receptionId, rx.id, 'Pharmacy')
+    }
+    const receipt = buildInpatientChargeReceipt(adm, row, receptionId, 'Cash', receiptDiscount)
+    if (!options?.skipReceipt) receptionReceipts.push(receipt)
+    return { ok: true, receipt }
+  }
+
   return { ok: false, error: 'Unsupported charge type.' }
 }
 
@@ -1594,8 +1791,8 @@ export function settleInpatientBookCharge(
   options?: InpatientCollectOptions,
 ): { ok: boolean; receipt?: ReceptionReceipt; error?: string } {
   const adm = getAdmissionById(admissionId)
-  if (!adm || adm.billingMode !== 'credit_book') {
-    return { ok: false, error: 'Patient is not on credit book billing.' }
+  if (!adm) {
+    return { ok: false, error: 'Admission not found.' }
   }
   if (isInpatientChargePaid(row.status)) {
     return { ok: false, error: 'Charge already paid.' }
@@ -1629,7 +1826,9 @@ export function settleInpatientBookCharge(
       ? 'Laboratory'
       : paidRow.sourceType === 'surgery'
         ? 'Surgery'
-        : 'Other'
+        : paidRow.sourceType === 'pharmacy'
+          ? 'Pharmacy'
+          : 'Other'
   const discountAmount = options?.discountAmount ?? 0
   const paidTotal = Math.max(0, paidRow.amount - discountAmount)
   if (!options?.skipPaymentRecord) {
@@ -1640,6 +1839,15 @@ export function settleInpatientBookCharge(
       receptionId,
       paidRow.sourceId,
       incomeCategory,
+    )
+  }
+
+  if (paidRow.sourceType === 'pharmacy') {
+    markInpatientPrescriptionPaidFromBilling(
+      paidRow.sourceId,
+      receptionId,
+      paidTotal,
+      'Cash',
     )
   }
 
@@ -1669,10 +1877,7 @@ export function collectInpatientChargePayment(
   if (isInpatientChargePaid(row.status)) {
     return { ok: false, error: 'Charge already paid.' }
   }
-  const result =
-    adm.billingMode === 'credit_book'
-      ? settleInpatientBookCharge(admissionId, row, receptionId, options)
-      : collectInpatientChargeCash(admissionId, row, receptionId, options)
+  const result = settleInpatientBookCharge(admissionId, row, receptionId, options)
   if (!result.ok) return result
   const discharged = dischargeInpatientAfterFullPayment(admissionId)
   return { ...result, discharged }
@@ -1748,22 +1953,51 @@ export function getLatestInpatientCheckoutReceipt(admissionId: string): Receptio
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
 }
 
-/** Medicine request from nursing for an admitted inpatient (pharmacy queue) */
-export function isNursingInpatientMedicineRequest(rx: Prescription): boolean {
+/** Inpatient medicine order (doctor or nursing) linked to an admission */
+export function isInpatientMedicineRequest(rx: Prescription): boolean {
   if (!rx.admissionId) return false
   const adm = getAdmissionById(rx.admissionId)
-  if (!adm) return false
-  if (!rx.orderedById) return false
-  const orderedBy = getStaffById(rx.orderedById)
-  return orderedBy?.role === 'nurse'
+  return !!adm && adm.status !== 'Discharged'
 }
 
+/** @deprecated Use isInpatientMedicineRequest */
+export function isNursingInpatientMedicineRequest(rx: Prescription): boolean {
+  return isInpatientMedicineRequest(rx)
+}
+
+export function getInpatientMedicineRequests(status?: Prescription['status']): Prescription[] {
+  return prescriptions
+    .filter((p) => isInpatientMedicineRequest(p) && (!status || p.status === status))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+
+/** @deprecated Use getInpatientMedicineRequests */
 export function getNursingInpatientMedicineRequests(
   status?: Prescription['status'],
 ): Prescription[] {
-  return prescriptions
-    .filter((p) => isNursingInpatientMedicineRequest(p) && (!status || p.status === status))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  return getInpatientMedicineRequests(status)
+}
+
+export function getInpatientMedicineOrderedByLabel(rx: Prescription): string {
+  if (!rx.orderedById) return '—'
+  const staff = getStaffById(rx.orderedById)
+  if (!staff) return '—'
+  if (staff.role === 'nurse') return `Nurse ${staff.firstName} ${staff.lastName}`
+  if (staff.role === 'doctor') return `Dr. ${staff.firstName} ${staff.lastName}`
+  return `${staff.firstName} ${staff.lastName}`
+}
+
+export function isInpatientMedicineSentToReception(rx: Prescription): boolean {
+  return !!rx.sentToReceptionAt
+}
+
+export function getInpatientMedicinePaymentStatus(rx: Prescription): InpatientMedicinePaymentStatus {
+  if (isInpatientMedicinePaymentCollected(rx)) {
+    if (rx.paymentMethod === 'Credit Book') return 'credit_book'
+    return 'paid_cash'
+  }
+  if (isInpatientMedicineSentToReception(rx)) return 'at_reception'
+  return 'awaiting_payment'
 }
 
 function findInventoryForMedicine(medicineName: string) {
@@ -1773,6 +2007,52 @@ function findInventoryForMedicine(medicineName: string) {
       i.name.toLowerCase().includes(lower) ||
       lower.includes(i.name.toLowerCase().split(' ')[0]),
   )
+}
+
+function findInventoryBySupplyName(supplyName: string) {
+  const lower = supplyName.toLowerCase().trim()
+  const exact = inventoryItems.find((i) => i.name.toLowerCase() === lower)
+  if (exact) return exact
+  return findInventoryForMedicine(supplyName)
+}
+
+export function deliverDepartmentSupplyRequest(
+  requestId: string,
+  userId: string,
+): { ok: boolean; error?: string } {
+  const req = departmentSupplyRequests.find((r) => r.id === requestId)
+  if (!req) return { ok: false, error: 'Request not found.' }
+  if (req.status === 'Pending') return { ok: false, error: 'Approve the request before delivery.' }
+  if (req.status === 'Delivered') return { ok: false, error: 'Request already delivered.' }
+
+  for (const line of req.items) {
+    const inv = findInventoryBySupplyName(line.supplyName)
+    if (!inv) return { ok: false, error: `No inventory match for "${line.supplyName}".` }
+    if (inv.quantity < line.quantity) {
+      return { ok: false, error: `Insufficient stock for ${inv.name} (need ${line.quantity}, have ${inv.quantity}).` }
+    }
+
+    inv.quantity -= line.quantity
+    syncMedicineStatusForInventoryItem(inv)
+
+    stockTransactions.push({
+      id: generateId('st'),
+      itemId: inv.id,
+      type: 'Internal Usage',
+      quantity: line.quantity,
+      unitPrice: inv.unitPrice,
+      unitCost: inv.purchasePrice ?? 0,
+      department: req.department,
+      reference: req.id,
+      notes: `Supply delivered to ${req.department}`,
+      createdAt: new Date().toISOString(),
+      createdBy: userId,
+    })
+  }
+
+  req.status = 'Delivered'
+  touchHmsStore()
+  return { ok: true }
 }
 
 export function estimatePrescriptionTotalFee(rx: Prescription): number {
@@ -1797,9 +2077,9 @@ export function isInpatientMedicinePaymentCollected(rx: Prescription): boolean {
   return total > 0 && paid >= total - 0.001
 }
 
-/** Active = awaiting payment at reception. Inactive = payment collected. */
+/** Active = awaiting payment. Inactive = payment collected or on credit book. */
 export function isInpatientMedicineActive(rx: Prescription): boolean {
-  if (!isNursingInpatientMedicineRequest(rx)) return rx.status === 'Pending'
+  if (!isInpatientMedicineRequest(rx)) return rx.status === 'Pending'
   return !isInpatientMedicinePaymentCollected(rx)
 }
 
@@ -1821,6 +2101,7 @@ export function createInpatientPrescription(params: {
     items: params.items,
     status: 'Pending',
     createdAt: now(),
+    lastModifiedAt: now(),
   }
   rx.totalFee = estimatePrescriptionTotalFee(rx)
   prescriptions.push(rx)
@@ -1828,12 +2109,59 @@ export function createInpatientPrescription(params: {
   return rx
 }
 
-export function collectInpatientMedicinePaymentAtReception(
+/** Pharmacy approves inpatient medicine request (doctor or nursing) before payment */
+export function approveInpatientMedicineAtPharmacy(
   prescriptionId: string,
-  receptionId: string,
-): { ok: boolean; error?: string; receipt?: ReceptionReceipt } {
+  pharmacyUserId: string,
+): { ok: boolean; error?: string } {
   const rx = prescriptions.find((p) => p.id === prescriptionId)
-  if (!rx || !isNursingInpatientMedicineRequest(rx)) {
+  if (!rx || !isInpatientMedicineRequest(rx)) {
+    return { ok: false, error: 'Inpatient medicine request not found.' }
+  }
+  if (rx.status !== 'Pending') {
+    return { ok: false, error: 'Only pending requests can be approved.' }
+  }
+  rx.status = 'Approved'
+  rx.approvedAt = now()
+  rx.approvedByPharmacyId = pharmacyUserId
+  rx.lastModifiedAt = now()
+  touchHmsStore()
+  return { ok: true }
+}
+
+/** Pharmacy sends unpaid request to reception cashier */
+export function sendInpatientMedicineToReceptionAtPharmacy(
+  prescriptionId: string,
+  pharmacyUserId: string,
+): { ok: boolean; error?: string } {
+  const rx = prescriptions.find((p) => p.id === prescriptionId)
+  if (!rx || !isInpatientMedicineRequest(rx)) {
+    return { ok: false, error: 'Inpatient medicine request not found.' }
+  }
+  if (rx.status !== 'Approved') {
+    return { ok: false, error: 'Approve the request before sending to reception.' }
+  }
+  if (isInpatientMedicinePaymentCollected(rx)) {
+    return { ok: false, error: 'Payment already collected.' }
+  }
+  if (isInpatientMedicineSentToReception(rx)) {
+    return { ok: false, error: 'Already sent to reception.' }
+  }
+  const ts = now()
+  rx.sentToReceptionAt = ts
+  rx.sentToReceptionByPharmacyId = pharmacyUserId
+  rx.lastModifiedAt = ts
+  touchHmsStore()
+  return { ok: true }
+}
+
+/** Patient pays cash at pharmacy (no reception visit needed) */
+export function collectInpatientMedicinePaymentAtPharmacy(
+  prescriptionId: string,
+  pharmacyUserId: string,
+): { ok: boolean; error?: string } {
+  const rx = prescriptions.find((p) => p.id === prescriptionId)
+  if (!rx || !isInpatientMedicineRequest(rx)) {
     return { ok: false, error: 'Inpatient medicine request not found.' }
   }
   if (isInpatientMedicinePaymentCollected(rx)) {
@@ -1842,9 +2170,8 @@ export function collectInpatientMedicinePaymentAtReception(
   if (rx.status !== 'Approved') {
     return { ok: false, error: 'Pharmacy must approve this request first.' }
   }
-  const billing = getPrescriptionDispenseBilling(rx)
-  if (billing !== 'inpatient_cash') {
-    return { ok: false, error: 'This patient is on credit book — use Add to Book.' }
+  if (isInpatientMedicineSentToReception(rx)) {
+    return { ok: false, error: 'Already sent to reception — use Inpatient billing there.' }
   }
 
   const total = estimatePrescriptionTotalFee(rx)
@@ -1854,14 +2181,24 @@ export function collectInpatientMedicinePaymentAtReception(
   if (!patient) return { ok: false, error: 'Patient not found.' }
 
   const nowIso = now()
-  const receiptNumber = generateNumber('RCP')
   const itemDescription = rx.items.map((i) => i.medicine).join(', ')
 
   rx.totalFee = total
   rx.amountPaid = total
   rx.paymentCollectedAt = nowIso
-  rx.collectedByReceptionId = receptionId
+  rx.collectedByPharmacyId = pharmacyUserId
   rx.paymentMethod = 'Cash'
+  rx.lastModifiedAt = nowIso
+
+  incomeRecords.push({
+    id: generateId('inc'),
+    category: 'Pharmacy',
+    amount: total,
+    description: `Inpatient medicine (pharmacy) — ${patient.fullName}`,
+    reference: rx.id,
+    receivedBy: pharmacyUserId,
+    createdAt: nowIso,
+  })
 
   payments.push({
     id: generateId('pay'),
@@ -1869,124 +2206,12 @@ export function collectInpatientMedicinePaymentAtReception(
     visitId: rx.visitId,
     amount: total,
     paymentMethod: 'Cash',
-    receiptNumber,
+    receiptNumber: generateNumber('RCP'),
     description: `Inpatient medicine — ${itemDescription}`,
-    receivedBy: receptionId,
-    createdAt: nowIso,
-  })
-  incomeRecords.push({
-    id: generateId('inc'),
-    category: 'Pharmacy',
-    amount: total,
-    description: `Inpatient medicine — ${patient.fullName}`,
-    reference: rx.id,
-    receivedBy: receptionId,
+    receivedBy: pharmacyUserId,
     createdAt: nowIso,
   })
 
-  const visit = getVisitById(rx.visitId)
-  const doctor = getStaffById(rx.doctorId)
-  const doctorName = doctor
-    ? doctor.role === 'emergency'
-      ? 'Emergency'
-      : `Dr. ${doctor.firstName} ${doctor.lastName}`
-    : '—'
-  const receipt: ReceptionReceipt = {
-    id: generateId('rcpt'),
-    receiptNumber,
-    type: 'pharmacy',
-    patientId: rx.patientId,
-    visitId: rx.visitId,
-    doctorId: rx.doctorId,
-    doctorName,
-    patientNumber: visit?.patientNumber ?? visit?.queueNumber ?? 0,
-    isEmergency: visit?.isEmergency ?? false,
-    lineItems: rx.items.map((i) => ({
-      description: i.medicine,
-      amount: findInventoryForMedicine(i.medicine)?.unitPrice ?? 0,
-    })),
-    subtotal: total,
-    discountAmount: 0,
-    total,
-    paymentConfirmed: true,
-    createdAt: nowIso,
-    createdBy: receptionId,
-  }
-  receptionReceipts.push(receipt)
-  touchHmsStore()
-  return { ok: true, receipt }
-}
-
-export function chargeInpatientMedicineToBookAtReception(
-  prescriptionId: string,
-  receptionId: string,
-): { ok: boolean; error?: string } {
-  const rx = prescriptions.find((p) => p.id === prescriptionId)
-  if (!rx || !isNursingInpatientMedicineRequest(rx)) {
-    return { ok: false, error: 'Inpatient medicine request not found.' }
-  }
-  if (isInpatientMedicinePaymentCollected(rx)) {
-    return { ok: false, error: 'Already charged to account.' }
-  }
-  if (rx.status !== 'Approved') {
-    return { ok: false, error: 'Pharmacy must approve this request first.' }
-  }
-  const billing = getPrescriptionDispenseBilling(rx)
-  if (billing !== 'inpatient_credit_book') {
-    return { ok: false, error: 'This patient pays cash — use Collect Payment.' }
-  }
-
-  const adm = getActiveAdmissionForVisit(rx.visitId)
-  if (!adm || adm.billingMode !== 'credit_book' || !adm.bookOpen) {
-    return { ok: false, error: 'Credit book is not open for this patient.' }
-  }
-  if (hasAdmissionChargeReference(adm.id, 'pharmacy', rx.id)) {
-    return { ok: false, error: 'Already on credit book.' }
-  }
-
-  const total = estimatePrescriptionTotalFee(rx)
-  const itemDescription = rx.items.map((i) => i.medicine).join(', ')
-
-  addAccountCharge(
-    rx.patientId,
-    total,
-    'Pharmacy',
-    `Prescription — ${itemDescription}`,
-    rx.visitId,
-    receptionId,
-    {
-      admissionId: adm.id,
-      settledAtCharge: false,
-      referenceId: rx.id,
-      referenceType: 'pharmacy',
-    },
-  )
-
-  const nowIso = now()
-  rx.totalFee = total
-  rx.amountPaid = total
-  rx.paymentCollectedAt = nowIso
-  rx.collectedByReceptionId = receptionId
-  rx.paymentMethod = 'Credit Book'
-  touchHmsStore()
-  return { ok: true }
-}
-
-/** Pharmacy approves nursing inpatient medicine request before reception payment */
-export function approveInpatientMedicineAtPharmacy(
-  prescriptionId: string,
-  pharmacyUserId: string,
-): { ok: boolean; error?: string } {
-  const rx = prescriptions.find((p) => p.id === prescriptionId)
-  if (!rx || !isNursingInpatientMedicineRequest(rx)) {
-    return { ok: false, error: 'Inpatient medicine request not found.' }
-  }
-  if (rx.status !== 'Pending') {
-    return { ok: false, error: 'Only pending requests can be approved.' }
-  }
-  rx.status = 'Approved'
-  rx.approvedAt = now()
-  rx.approvedByPharmacyId = pharmacyUserId
   touchHmsStore()
   return { ok: true }
 }
@@ -2002,8 +2227,8 @@ export function dispenseInpatientMedicineAtPharmacy(
   if (!rx || rx.status !== 'Approved') {
     return { ok: false, error: 'Prescription must be approved and awaiting dispense.' }
   }
-  if (!isNursingInpatientMedicineRequest(rx)) {
-    return { ok: false, error: 'Not an inpatient nursing medicine request.' }
+  if (!isInpatientMedicineRequest(rx)) {
+    return { ok: false, error: 'Not an inpatient medicine request.' }
   }
   if (!isInpatientMedicinePaymentCollected(rx)) {
     return { ok: false, error: 'Payment not collected at reception yet.' }
@@ -2122,13 +2347,16 @@ export function processPrescriptionDispense(
   pharmacyUserId: string,
 ): { ok: boolean; error?: string; billing?: PrescriptionDispenseBilling } {
   const rx = prescriptions.find((p) => p.id === prescriptionId)
-  if (!rx || rx.status !== 'Pending') {
+  if (!rx) {
     return { ok: false, error: 'Prescription not found.' }
   }
 
   const billing = getPrescriptionDispenseBilling(rx)
 
-  if (isNursingInpatientMedicineRequest(rx)) {
+  if (isInpatientMedicineRequest(rx)) {
+    if (rx.status !== 'Approved') {
+      return { ok: false, error: 'Prescription must be approved before dispense.' }
+    }
     const result = dispenseInpatientMedicineAtPharmacy(
       prescriptionId,
       pharmacyUserId,
@@ -2136,6 +2364,10 @@ export function processPrescriptionDispense(
       itemDescription,
     )
     return { ...result, billing }
+  }
+
+  if (rx.status !== 'Pending') {
+    return { ok: false, error: 'Prescription not found.' }
   }
 
   if (billing === 'inpatient_credit_book') {
@@ -2640,6 +2872,8 @@ export function addAccountCharge(
     settledAtCharge?: boolean
     referenceId?: string
     referenceType?: AccountTransaction['referenceType']
+    /** Calendar date for the charge (YYYY-MM-DD) — used for nightly bed fees */
+    chargeDate?: string
   },
 ): AccountTransaction {
   let account = getPatientAccount(patientId)
@@ -2660,7 +2894,7 @@ export function addAccountCharge(
     settledAtCharge: options?.settledAtCharge,
     referenceId: options?.referenceId,
     referenceType: options?.referenceType,
-    createdAt: now(),
+    createdAt: options?.chargeDate ? `${options.chargeDate}T12:00:00.000Z` : now(),
     createdBy,
   }
   accountTransactions.push(txn)
@@ -2745,7 +2979,8 @@ export function updateDiscountLimits(limits: DiscountLimitsSettings): void {
     reception: { ...limits.reception },
     pharmacy: { ...limits.pharmacy },
   }
-  touchSystemSettingsModified()
+  stampModified(systemSettings)
+  touchHmsStore()
 }
 
 export function sendPatientDiscountToReception(id: string): boolean {
@@ -2918,6 +3153,7 @@ export function getDashboardStats() {
     pendingPrescriptions: prescriptions.filter((p) => p.status === 'Pending').length,
     totalOutstanding: patientAccounts.reduce((s, a) => s + a.outstandingBalance, 0),
     inpatientUnpaidAlerts: getReceptionInpatientUnpaidAlerts().length,
+    obstetricPendingPayments: obstetricDeliveries.filter((d) => d.status === 'Pending').length,
     todayRevenue: incomeRecords.filter((i) => i.createdAt.startsWith(today())).reduce((s, i) => s + i.amount, 0),
     bedOccupancy: beds.filter((b) => b.isOccupied).length,
     totalBeds: beds.length,
@@ -3071,6 +3307,237 @@ export function getReferralStaffForRegistration(): StaffUser[] {
   )
 }
 
+export function getObstetricianFee(): number {
+  return systemSettings.obstetricianFee ?? 0
+}
+
+export function setObstetricianFee(amount: number): void {
+  systemSettings.obstetricianFee = Math.max(0, amount)
+  stampModified(systemSettings)
+  touchHmsStore()
+}
+
+export function getObstetricDoctors(): StaffUser[] {
+  return staffUsers.filter((s) => s.isActive && s.role === 'doctor')
+}
+
+export function getObstetricDeliveries(): ObstetricDelivery[] {
+  return [...obstetricDeliveries]
+}
+
+export function getObstetricDeliveryById(id: string): ObstetricDelivery | undefined {
+  return obstetricDeliveries.find((d) => d.id === id)
+}
+
+export function getObstetricReceiptByDeliveryId(id: string): ReceptionReceipt | undefined {
+  const row = getObstetricDeliveryById(id)
+  if (!row?.receiptId) return undefined
+  return receptionReceipts.find((r) => r.id === row.receiptId)
+}
+
+export function createObstetricDelivery(params: {
+  motherFullName: string
+  motherAge: number
+  motherPhone: string
+  childGender: ObstetricChildGender
+  doctorId: string
+  createdBy: string
+}): ObstetricDelivery | null {
+  const doctor = getStaffById(params.doctorId)
+  if (!doctor || doctor.role !== 'doctor') return null
+
+  const motherFullName = params.motherFullName.trim()
+  const motherPhone = params.motherPhone.trim()
+  if (!motherFullName || !motherPhone || params.motherAge < 1) return null
+
+  const delivery: ObstetricDelivery = {
+    id: generateId('obst-del'),
+    registrationNumber: generateNumber('OBT'),
+    motherFullName,
+    motherAge: params.motherAge,
+    motherPhone,
+    childGender: params.childGender,
+    doctorId: params.doctorId,
+    obstetricianFee: getObstetricianFee(),
+    amountPaid: 0,
+    paymentConfirmed: false,
+    status: 'Pending',
+    createdAt: now(),
+    createdBy: params.createdBy,
+    lastModifiedAt: now(),
+  }
+  obstetricDeliveries.push(delivery)
+  touchHmsStore()
+  return delivery
+}
+
+export function updateObstetricDelivery(
+  id: string,
+  updates: {
+    motherFullName?: string
+    motherAge?: number
+    motherPhone?: string
+    childGender?: ObstetricChildGender
+    doctorId?: string
+  },
+): boolean {
+  const row = obstetricDeliveries.find((d) => d.id === id)
+  if (!row || row.status === 'Paid') return false
+
+  if (updates.doctorId) {
+    const doctor = getStaffById(updates.doctorId)
+    if (!doctor || doctor.role !== 'doctor') return false
+    row.doctorId = updates.doctorId
+  }
+  if (updates.motherFullName !== undefined) {
+    const name = updates.motherFullName.trim()
+    if (!name) return false
+    row.motherFullName = name
+  }
+  if (updates.motherAge !== undefined) {
+    if (updates.motherAge < 1) return false
+    row.motherAge = updates.motherAge
+  }
+  if (updates.motherPhone !== undefined) {
+    const phone = updates.motherPhone.trim()
+    if (!phone) return false
+    row.motherPhone = phone
+  }
+  if (updates.childGender !== undefined) row.childGender = updates.childGender
+
+  row.obstetricianFee = getObstetricianFee()
+  row.lastModifiedAt = now()
+  touchHmsStore()
+  return true
+}
+
+export function deleteObstetricDelivery(id: string): boolean {
+  const idx = obstetricDeliveries.findIndex((d) => d.id === id)
+  if (idx < 0) return false
+  if (obstetricDeliveries[idx].status === 'Paid') return false
+  obstetricDeliveries.splice(idx, 1)
+  touchHmsStore()
+  return true
+}
+
+export function confirmObstetricDeliveryPayment(
+  id: string,
+  collectedBy: string,
+): ReceptionReceipt | null {
+  const row = obstetricDeliveries.find((d) => d.id === id)
+  if (!row || row.paymentConfirmed || row.status === 'Paid') return null
+
+  const fee = row.obstetricianFee > 0 ? row.obstetricianFee : getObstetricianFee()
+  if (fee <= 0) return null
+
+  const doctor = getStaffById(row.doctorId)
+  const doctorName = doctor ? `Dr. ${doctor.firstName} ${doctor.lastName}` : '—'
+  const receiptNumber = generateNumber('RCP')
+  const paymentNow = now()
+  const syntheticPatientId = `obst-${row.id}`
+
+  payments.push({
+    id: generateId('pay'),
+    patientId: syntheticPatientId,
+    amount: fee,
+    paymentMethod: 'Cash',
+    receiptNumber,
+    description: 'Obstetrician Fee',
+    receivedBy: collectedBy,
+    createdAt: paymentNow,
+  })
+
+  incomeRecords.push({
+    id: generateId('inc'),
+    category: 'Obstetrics',
+    amount: fee,
+    description: `Obstetrician — ${row.motherFullName}`,
+    reference: row.registrationNumber,
+    doctorId: row.doctorId,
+    receivedBy: collectedBy,
+    createdAt: paymentNow,
+  })
+
+  row.paymentConfirmed = true
+  row.status = 'Paid'
+  row.amountPaid = fee
+  row.obstetricianFee = fee
+  row.paymentConfirmedAt = paymentNow
+  row.paidByReceptionId = collectedBy
+  row.receiptNumber = receiptNumber
+  row.lastModifiedAt = paymentNow
+
+  const receipt: ReceptionReceipt = {
+    id: generateId('rcpt'),
+    receiptNumber,
+    type: 'obstetric',
+    patientId: syntheticPatientId,
+    doctorId: row.doctorId,
+    doctorName,
+    patientNumber: 0,
+    isEmergency: false,
+    lineItems: [{ description: 'Obstetrician Fee', amount: fee }],
+    subtotal: fee,
+    discountAmount: 0,
+    total: fee,
+    paymentMethod: 'Cash',
+    paymentConfirmed: true,
+    obstetricRegistrationNumber: row.registrationNumber,
+    motherFullName: row.motherFullName,
+    motherAge: row.motherAge,
+    motherPhone: row.motherPhone,
+    childGender: row.childGender,
+    createdAt: paymentNow,
+    createdBy: collectedBy,
+  }
+  receptionReceipts.push(receipt)
+  row.receiptId = receipt.id
+  touchHmsStore()
+  return receipt
+}
+
+export function getDoctorCommissionPayouts(): DoctorCommissionPayout[] {
+  return [...doctorCommissionPayouts]
+}
+
+export function getDoctorCommissionPayoutForMonth(
+  doctorId: string,
+  periodMonth: string,
+): DoctorCommissionPayout | undefined {
+  return doctorCommissionPayouts.find(
+    (p) => p.doctorId === doctorId && p.periodMonth === periodMonth,
+  )
+}
+
+export function isDoctorCommissionPaidForMonth(doctorId: string, periodMonth: string): boolean {
+  return Boolean(getDoctorCommissionPayoutForMonth(doctorId, periodMonth))
+}
+
+export function confirmDoctorCommissionPayout(params: {
+  periodMonth: string
+  confirmedBy: string
+  report: DoctorFinancialReport
+  notes?: string
+}): DoctorCommissionPayout {
+  const existing = getDoctorCommissionPayoutForMonth(params.report.doctorId, params.periodMonth)
+  if (existing) {
+    throw new Error(`Commission for ${params.report.doctorName} in ${params.periodMonth} is already confirmed.`)
+  }
+
+  const payout: DoctorCommissionPayout = {
+    ...params.report,
+    id: generateId('dcp'),
+    periodMonth: params.periodMonth,
+    confirmedAt: now(),
+    confirmedBy: params.confirmedBy,
+    notes: params.notes,
+  }
+  doctorCommissionPayouts.push(payout)
+  touchHmsStore()
+  schedulePersist()
+  return payout
+}
+
 export function isStaffCredentialTaken(
   username: string,
   email: string,
@@ -3101,6 +3568,7 @@ export function removeStaffUser(staffId: string): { ok: boolean; error?: string 
   const index = staffUsers.findIndex((staff) => staff.id === staffId)
   if (index < 0) return { ok: false, error: 'User not found.' }
   staffUsers.splice(index, 1)
+  hmsStoreRevision += 1
   schedulePersist()
   return { ok: true }
 }
@@ -3132,6 +3600,7 @@ export function saveClinicalNoteForVisit(input: {
   const existing = getClinicalNoteForVisit(input.visitId)
   if (existing) {
     existing.note = note
+    existing.lastModifiedAt = now()
     schedulePersist()
     return existing
   }
@@ -3143,6 +3612,7 @@ export function saveClinicalNoteForVisit(input: {
     doctorId: input.doctorId,
     note,
     createdAt: now(),
+    lastModifiedAt: now(),
   }
   clinicalNotes.push(entry)
   schedulePersist()
@@ -3150,7 +3620,9 @@ export function saveClinicalNoteForVisit(input: {
 }
 
 export function getPrescriptionForVisit(visitId: string): Prescription | undefined {
-  return prescriptions.find((p) => p.visitId === visitId)
+  return prescriptions
+    .filter((p) => p.visitId === visitId && p.status !== 'Dispensed')
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0]
 }
 
 export function getPrescriptionsForPatient(patientId: string): Prescription[] {
@@ -3178,10 +3650,42 @@ export function savePrescriptionForVisit(input: {
   const validItems = input.items.filter((i) => i.medicine.trim())
   if (validItems.length === 0) throw new Error('Add at least one medicine')
 
+  const adm = getActiveAdmissionForVisit(input.visitId)
   const existing = getPrescriptionForVisit(input.visitId)
+
+  if (adm) {
+    if (existing && existing.status !== 'Dispensed' && isInpatientMedicineRequest(existing)) {
+      existing.items = validItems
+      existing.totalFee = estimatePrescriptionTotalFee(existing)
+      existing.lastModifiedAt = now()
+      if (existing.status === 'Printed') existing.status = 'Pending'
+      schedulePersist()
+      return existing
+    }
+    if (existing && existing.status !== 'Dispensed' && !isInpatientMedicineRequest(existing)) {
+      existing.admissionId = adm.id
+      existing.orderedById = input.doctorId
+      existing.items = validItems
+      existing.status = 'Pending'
+      existing.totalFee = estimatePrescriptionTotalFee(existing)
+      existing.lastModifiedAt = now()
+      schedulePersist()
+      return existing
+    }
+    return createInpatientPrescription({
+      visitId: input.visitId,
+      patientId: input.patientId,
+      admissionId: adm.id,
+      doctorId: input.doctorId,
+      orderedById: input.doctorId,
+      items: validItems,
+    })
+  }
+
   if (existing) {
     existing.items = validItems
     existing.status = 'Printed'
+    existing.lastModifiedAt = now()
     schedulePersist()
     return existing
   }
@@ -3194,6 +3698,7 @@ export function savePrescriptionForVisit(input: {
     items: validItems,
     status: 'Printed',
     createdAt: now(),
+    lastModifiedAt: now(),
   }
   prescriptions.push(rx)
   schedulePersist()
@@ -3210,6 +3715,7 @@ export function createLabRequestForVisit(input: {
   if (testNames.length === 0) throw new Error('Add at least one test')
 
   const tests = testNames.map((testName) => ({ testName }))
+  const ts = now()
   const lab: LabRequest = {
     id: generateId('lab'),
     requestNumber: generateNumber('LR'),
@@ -3219,7 +3725,8 @@ export function createLabRequestForVisit(input: {
     tests,
     status: 'Awaiting Payment',
     totalFee: calculateLabRequestSubtotal(tests),
-    createdAt: now(),
+    createdAt: ts,
+    lastModifiedAt: ts,
   }
   labRequests.push(lab)
   schedulePersist()
@@ -3242,6 +3749,7 @@ export function saveAdmissionRequestForVisit(input: {
   const existing = getAdmissionRequestForVisit(input.visitId)
   if (existing) {
     existing.reason = reason
+    existing.lastModifiedAt = now()
     schedulePersist()
     return existing
   }
@@ -3254,6 +3762,7 @@ export function saveAdmissionRequestForVisit(input: {
     reason,
     status: 'Pending',
     createdAt: now(),
+    lastModifiedAt: now(),
   }
   admissionRequests.push(req)
   schedulePersist()
@@ -3289,6 +3798,7 @@ export function saveSurgeryRequestForVisit(input: {
     existing.paymentMethod = undefined
     existing.amountPaid = undefined
     existing.paidByReceptionId = undefined
+    existing.lastModifiedAt = now()
     attachSurgeryToInpatientCreditBookIfEligible(existing, input.doctorId)
     schedulePersist()
     return existing
@@ -3306,6 +3816,7 @@ export function saveSurgeryRequestForVisit(input: {
     status: 'Pending',
     surgeryFee: catalog.price,
     createdAt: now(),
+    lastModifiedAt: now(),
   }
   surgeryRequests.push(req)
   attachSurgeryToInpatientCreditBookIfEligible(req, input.doctorId)
@@ -3459,7 +3970,7 @@ export function completeLabRequest(labRequestId: string, tests: LabTestItem[]): 
   lab.status = 'Completed'
   lab.completedAt = now
   lab.lastModifiedAt = now
-  hmsStoreRevision += 1
+  touchHmsStore()
   return lab
 }
 
@@ -3575,11 +4086,6 @@ function stampModified<T extends { lastModifiedAt?: string }>(entity: T): void {
   entity.lastModifiedAt = new Date().toISOString()
 }
 
-function touchSystemSettingsModified(): void {
-  stampModified(systemSettings)
-  schedulePersist()
-}
-
 export function saveWardEntry(data: { id?: string; name: string; description?: string }): Ward {
   const name = data.name.trim()
   if (!name) throw new Error('Ward name is required')
@@ -3614,6 +4120,7 @@ export function deleteWardEntry(id: string): void {
   const index = wards.findIndex((w) => w.id === id)
   if (index < 0) throw new Error('Ward not found')
   wards.splice(index, 1)
+  hmsStoreRevision += 1
   schedulePersist()
 }
 
@@ -3662,6 +4169,7 @@ export function deleteRoomEntry(id: string): void {
   const index = rooms.findIndex((r) => r.id === id)
   if (index < 0) throw new Error('Room not found')
   rooms.splice(index, 1)
+  hmsStoreRevision += 1
   schedulePersist()
 }
 
@@ -3721,6 +4229,7 @@ export function deleteBedEntry(id: string): void {
   const index = beds.findIndex((b) => b.id === id)
   beds.splice(index, 1)
   syncRoomBedCounts()
+  hmsStoreRevision += 1
   schedulePersist()
 }
 
@@ -3753,6 +4262,8 @@ export type HmsStoreSnapshot = {
   surgeryCatalog: SurgeryCatalog[]
   discounts: Discount[]
   patientDiscounts: PatientDiscount[]
+  obstetricDeliveries: ObstetricDelivery[]
+  doctorCommissionPayouts: DoctorCommissionPayout[]
   admissions: Admission[]
   medicationAdministrations: MedicationAdministration[]
   nursingNotes: NursingNote[]
@@ -3799,6 +4310,8 @@ function getHmsStoreSnapshot(): HmsStoreSnapshot {
     surgeryCatalog: [...surgeryCatalog],
     discounts: [...discounts],
     patientDiscounts: [...patientDiscounts],
+    obstetricDeliveries: [...obstetricDeliveries],
+    doctorCommissionPayouts: [...doctorCommissionPayouts],
     admissions: [...admissions],
     medicationAdministrations: [...medicationAdministrations],
     nursingNotes: [...nursingNotes],
@@ -3834,11 +4347,16 @@ function hydrateHmsStore(snapshot: HmsStoreSnapshot): void {
   replaceArrayInPlace(wards, snapshot.wards ?? [])
   replaceArrayInPlace(rooms, snapshot.rooms ?? [])
   replaceArrayInPlace(beds, snapshot.beds ?? [])
-  replaceArrayInPlace(labTestCatalog, snapshot.labTestCatalog ?? [])
+  replaceArrayInPlace(
+    labTestCatalog,
+    (snapshot.labTestCatalog ?? []).map((item) => normalizeLabTestCatalogItem(item)),
+  )
   replaceArrayInPlace(medicineCatalog, snapshot.medicineCatalog ?? [])
   replaceArrayInPlace(surgeryCatalog, snapshot.surgeryCatalog ?? [])
   replaceArrayInPlace(discounts, snapshot.discounts ?? [])
   replaceArrayInPlace(patientDiscounts, snapshot.patientDiscounts ?? [])
+  replaceArrayInPlace(obstetricDeliveries, snapshot.obstetricDeliveries ?? [])
+  replaceArrayInPlace(doctorCommissionPayouts, snapshot.doctorCommissionPayouts ?? [])
   replaceArrayInPlace(admissions, snapshot.admissions ?? [])
   syncBedOccupancyFromAdmissions()
   replaceArrayInPlace(medicationAdministrations, snapshot.medicationAdministrations ?? [])
@@ -3850,7 +4368,24 @@ function hydrateHmsStore(snapshot: HmsStoreSnapshot): void {
   replaceArrayInPlace(emergencyCases, snapshot.emergencyCases ?? [])
   replaceArrayInPlace(incomeRecords, snapshot.incomeRecords ?? [])
   replaceArrayInPlace(expenseRecords, snapshot.expenseRecords ?? [])
-  Object.assign(systemSettings, snapshot.systemSettings ?? {})
+  applySystemSettingsFromSnapshot(snapshot.systemSettings)
+}
+
+function applySystemSettingsFromSnapshot(incoming?: SystemSettings): void {
+  if (!incoming) return
+  const merged = mergeSystemSettingsDeep(
+    JSON.parse(JSON.stringify(DEFAULT_SYSTEM_SETTINGS)) as SystemSettings,
+    incoming,
+  )
+  const target = systemSettings as unknown as Record<string, unknown>
+  for (const key of Object.keys(merged) as (keyof SystemSettings)[]) {
+    if (key === 'discountLimits') continue
+    target[key] = merged[key]
+  }
+  systemSettings.discountLimits = {
+    reception: { ...merged.discountLimits.reception },
+    pharmacy: { ...merged.discountLimits.pharmacy },
+  }
 }
 
 function wrapMutableStoreWithPersistence(): void {
@@ -3878,6 +4413,8 @@ function wrapMutableStoreWithPersistence(): void {
   surgeryCatalog = createPersistableArray(surgeryCatalog)
   discounts = createPersistableArray(discounts)
   patientDiscounts = createPersistableArray(patientDiscounts)
+  obstetricDeliveries = createPersistableArray(obstetricDeliveries)
+  doctorCommissionPayouts = createPersistableArray(doctorCommissionPayouts)
   admissions = createPersistableArray(admissions)
   medicationAdministrations = createPersistableArray(medicationAdministrations)
   nursingNotes = createPersistableArray(nursingNotes)
@@ -3935,8 +4472,17 @@ export function clearHmsStoreAndReset(): void {
 export { flushPersist as persistHmsStoreNow, flushPersistAsync as persistHmsStoreNowAsync }
 
 /** Fast save after staff user create/edit/delete (~2–3s) */
-export async function persistStaffUsersNowAsync(): Promise<void> {
-  await saveStaffSnapshotToSupabase(getHmsStoreSnapshot())
+export async function persistStaffUsersNowAsync(): Promise<string> {
+  clearPendingPersist()
+  beginFastSave()
+  try {
+    const savedAt = await saveStaffSnapshotToSupabase(getHmsStoreSnapshot())
+    hmsStoreRevision += 1
+    onSupabaseSaved?.(savedAt)
+    return savedAt
+  } finally {
+    endFastSave()
+  }
 }
 
 /** Fast save after medical catalog add/edit/delete/restock/import */
@@ -3944,10 +4490,60 @@ export async function persistMedicalCatalogNowAsync(): Promise<string> {
   clearPendingPersist()
   beginFastSave()
   try {
+    clearPendingPersist()
     const savedAt = await saveMedicalCatalogSnapshotToSupabase(getHmsStoreSnapshot())
     hmsStoreRevision += 1
     onSupabaseSaved?.(savedAt)
     return savedAt
+  } finally {
+    endFastSave()
+  }
+}
+
+export async function saveMedicineCatalogEntryAndPersist(
+  input: SaveMedicineCatalogInput,
+): Promise<MedicineCatalogItem> {
+  clearPendingPersist()
+  beginFastSave()
+  try {
+    const item = saveMedicineCatalogEntry(input, { skipSchedulePersist: true })
+    clearPendingPersist()
+    const savedAt = await saveMedicalCatalogSnapshotToSupabase(getHmsStoreSnapshot())
+    hmsStoreRevision += 1
+    onSupabaseSaved?.(savedAt)
+    return item
+  } finally {
+    endFastSave()
+  }
+}
+
+export async function deleteMedicineCatalogEntryAndPersist(id: string): Promise<void> {
+  clearPendingPersist()
+  beginFastSave()
+  try {
+    deleteMedicineCatalogEntry(id, { skipSchedulePersist: true })
+    clearPendingPersist()
+    const savedAt = await saveMedicalCatalogSnapshotToSupabase(getHmsStoreSnapshot())
+    hmsStoreRevision += 1
+    onSupabaseSaved?.(savedAt)
+  } finally {
+    endFastSave()
+  }
+}
+
+export async function restockMedicineAndPersist(
+  input: RestockMedicineInput,
+): Promise<MedicineCatalogItem | undefined> {
+  clearPendingPersist()
+  beginFastSave()
+  try {
+    const item = restockMedicine(input, { skipSchedulePersist: true })
+    if (!item) return undefined
+    clearPendingPersist()
+    const savedAt = await saveMedicalCatalogSnapshotToSupabase(getHmsStoreSnapshot())
+    hmsStoreRevision += 1
+    onSupabaseSaved?.(savedAt)
+    return item
   } finally {
     endFastSave()
   }
@@ -4013,10 +4609,17 @@ export async function persistPatientsNowAsync(): Promise<string> {
 export async function persistReleasePatientNowAsync(visitId: string): Promise<string> {
   const visit = getVisitById(visitId)
   if (!visit) throw new Error('Visit not found')
-  return persistDoctorConsultationNowAsync({
-    visitId,
-    patientId: visit.patientId,
-  })
+  clearPendingPersist()
+  beginFastSave()
+  try {
+    const savedAt = await savePatientReleaseSnapshotToSupabase(getHmsStoreSnapshot(), visitId)
+    hmsStoreRevision += 1
+    onSupabaseSaved?.(savedAt)
+    return savedAt
+  } finally {
+    clearPendingPersist()
+    endFastSave()
+  }
 }
 
 /** Fast save after doctor consultation — notes, prescriptions, labs, surgery, admissions, nurse orders */
@@ -4032,6 +4635,7 @@ export async function persistDoctorConsultationNowAsync(focus?: {
     onSupabaseSaved?.(savedAt)
     return savedAt
   } finally {
+    clearPendingPersist()
     endFastSave()
   }
 }
@@ -4047,6 +4651,7 @@ export async function persistSystemSettingsNowAsync(): Promise<string> {
     onSupabaseSaved?.(savedAt)
     return savedAt
   } finally {
+    clearPendingPersist()
     endFastSave()
   }
 }
@@ -4058,6 +4663,38 @@ export async function persistRegistrationFeesNowAsync(): Promise<string> {
   try {
     stampModified(systemSettings)
     const savedAt = await saveRegistrationFeesSnapshotToSupabase(getHmsStoreSnapshot())
+    hmsStoreRevision += 1
+    onSupabaseSaved?.(savedAt)
+    return savedAt
+  } finally {
+    endFastSave()
+  }
+}
+
+/** Fast save after obstetric delivery CRUD or payment */
+export async function persistObstetricDeliveryNowAsync(deliveryId?: string): Promise<string> {
+  clearPendingPersist()
+  beginFastSave()
+  try {
+    if (deliveryId) {
+      const row = getObstetricDeliveryById(deliveryId)
+      if (row) row.lastModifiedAt = now()
+    }
+    const savedAt = await saveObstetricDeliverySnapshotToSupabase(getHmsStoreSnapshot())
+    hmsStoreRevision += 1
+    onSupabaseSaved?.(savedAt)
+    return savedAt
+  } finally {
+    endFastSave()
+  }
+}
+
+/** Fast save after admin confirms doctor monthly commission payout */
+export async function persistDoctorCommissionPayoutNowAsync(): Promise<string> {
+  clearPendingPersist()
+  beginFastSave()
+  try {
+    const savedAt = await saveDoctorCommissionPayoutSnapshotToSupabase(getHmsStoreSnapshot())
     hmsStoreRevision += 1
     onSupabaseSaved?.(savedAt)
     return savedAt
@@ -4214,6 +4851,8 @@ export async function persistFullSnapshotNowAsync(): Promise<string> {
 
 /** Call after in-place entity edits (visit.status, lab.status, etc.) */
 export function touchHmsStore(): void {
+  hmsStoreRevision += 1
+  onStoreChanged?.()
   schedulePersist()
 }
 
@@ -4257,6 +4896,14 @@ export function applyHmsStoreSnapshot(snapshot: HmsStoreSnapshot): boolean {
       [...accountTransactions],
     ),
     patientDiscounts: mergeIncomingWithLocal(snapshot.patientDiscounts ?? [], [...patientDiscounts]),
+    obstetricDeliveries: mergeIncomingWithLocal(
+      snapshot.obstetricDeliveries ?? [],
+      [...obstetricDeliveries],
+    ),
+    doctorCommissionPayouts: mergeIncomingWithLocal(
+      snapshot.doctorCommissionPayouts ?? [],
+      [...doctorCommissionPayouts],
+    ),
     receptionReceipts: mergeIncomingWithLocal(
       snapshot.receptionReceipts ?? [],
       [...receptionReceipts],

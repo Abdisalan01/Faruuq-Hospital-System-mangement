@@ -1,7 +1,13 @@
 import { getSupabase } from '@/shared/lib/supabase'
 import type { Patient, StaffUser, Visit } from '@/shared/types'
 
-import { createEmptyHmsSnapshot, ensureBootstrapStaffInSnapshot } from './hmsEmptyState'
+import {
+  cloneSystemSettingsForPersist,
+  createEmptyHmsSnapshot,
+  ensureBootstrapStaffInSnapshot,
+  mergeSystemSettingsDeep,
+  resolveSystemSettingsOnLoad,
+} from './hmsEmptyState'
 import type { HmsStoreSnapshot } from './hmsStore'
 import { normalizeStaffUserEmail } from './passwordUtils'
 
@@ -58,6 +64,7 @@ const INPATIENT_PAYMENT_MIRROR_TABLES: {
     | 'receptionReceipts'
     | 'patientAccounts'
     | 'accountTransactions'
+    | 'prescriptions'
   table: string
 }[] = [
   { key: 'admissions', table: 'hms_admissions' },
@@ -70,16 +77,7 @@ const INPATIENT_PAYMENT_MIRROR_TABLES: {
   { key: 'receptionReceipts', table: 'hms_reception_receipts' },
   { key: 'patientAccounts', table: 'hms_patient_accounts' },
   { key: 'accountTransactions', table: 'hms_account_transactions' },
-]
-
-const CATALOG_MIRROR_TABLES: {
-  key: 'labTestCatalog' | 'medicineCatalog' | 'inventoryItems' | 'surgeryCatalog'
-  table: string
-}[] = [
-  { key: 'labTestCatalog', table: 'hms_lab_test_catalog' },
-  { key: 'medicineCatalog', table: 'hms_medicine_catalog' },
-  { key: 'inventoryItems', table: 'hms_inventory_items' },
-  { key: 'surgeryCatalog', table: 'hms_surgery_catalog' },
+  { key: 'prescriptions', table: 'hms_prescriptions' },
 ]
 
 const FACILITY_MIRROR_TABLES: { key: 'wards' | 'rooms' | 'beds'; table: string }[] = [
@@ -132,6 +130,8 @@ const COLLECTION_TABLES: { key: keyof Omit<HmsStoreSnapshot, 'version' | 'idCoun
   { key: 'surgeryCatalog', table: 'hms_surgery_catalog' },
   { key: 'discounts', table: 'hms_discounts' },
   { key: 'patientDiscounts', table: 'hms_patient_discounts' },
+  { key: 'obstetricDeliveries', table: 'hms_obstetric_deliveries' },
+  { key: 'doctorCommissionPayouts', table: 'hms_doctor_commission_payouts' },
   { key: 'admissions', table: 'hms_admissions' },
   { key: 'medicationAdministrations', table: 'hms_medication_administrations' },
   { key: 'nursingNotes', table: 'hms_nursing_notes' },
@@ -143,6 +143,28 @@ const COLLECTION_TABLES: { key: keyof Omit<HmsStoreSnapshot, 'version' | 'idCoun
   { key: 'incomeRecords', table: 'hms_income_records' },
   { key: 'expenseRecords', table: 'hms_expense_records' },
 ]
+
+/** Catalog CRUD persists authoritative lists in full_snapshot — mirror merge must not restore stale rows */
+const CATALOG_SNAPSHOT_TRUTH_KEYS = new Set<keyof HmsStoreSnapshot>([
+  'medicineCatalog',
+  'inventoryItems',
+  'labTestCatalog',
+  'surgeryCatalog',
+])
+
+function mergeCatalogFromSnapshot<T extends { id: string }>(
+  snapshot: HmsStoreSnapshot,
+  key: keyof HmsStoreSnapshot,
+  snapRows: T[],
+  tableRows: TableRowMeta<T>[],
+  snapshotBatchUpdatedAt: string,
+): T[] {
+  const fromSnapshot = snapshot[key]
+  if (Array.isArray(fromSnapshot)) {
+    return (fromSnapshot as unknown as T[]).map((row) => ({ ...row }))
+  }
+  return preferNewerRows(snapRows, tableRows, snapshotBatchUpdatedAt)
+}
 
 function isMissingColumnError(message: string): boolean {
   return message.includes('full_snapshot')
@@ -157,20 +179,6 @@ function isMissingTableError(message: string): boolean {
   )
 }
 
-function mergeSystemSettings(
-  columnSettings: HmsStoreSnapshot['systemSettings'] | null | undefined,
-  snapshotSettings: HmsStoreSnapshot['systemSettings'] | null | undefined,
-  metaUpdatedAt: string,
-  base: HmsStoreSnapshot['systemSettings'],
-): HmsStoreSnapshot['systemSettings'] {
-  const col = columnSettings ?? base
-  const snap = snapshotSettings ?? base
-  const colTime = Date.parse(col.lastModifiedAt ?? '') || 0
-  const snapTime = Date.parse(snap.lastModifiedAt ?? '') || Date.parse(metaUpdatedAt) || 0
-  const picked = snapTime >= colTime ? snap : col
-  return { ...base, ...picked }
-}
-
 function hydrateSnapshotFromMeta(meta: {
   version: number
   id_counter: number
@@ -182,18 +190,15 @@ function hydrateSnapshotFromMeta(meta: {
 
   const snapshot = meta.full_snapshot as HmsStoreSnapshot
   const base = createEmptyHmsSnapshot()
-  const metaUpdatedAt = meta.updated_at ?? new Date().toISOString()
   return {
     ...base,
     ...snapshot,
     version: (meta.version ?? snapshot.version ?? base.version) as typeof base.version,
     idCounter: meta.id_counter ?? snapshot.idCounter ?? base.idCounter,
-    systemSettings: mergeSystemSettings(
-      meta.system_settings,
-      snapshot.systemSettings,
-      metaUpdatedAt,
-      base.systemSettings,
-    ),
+    // full_snapshot.systemSettings is source of truth (column can drift after partial saves)
+    systemSettings: snapshot.systemSettings
+      ? mergeSystemSettingsDeep(base.systemSettings, meta.system_settings, snapshot.systemSettings)
+      : mergeSystemSettingsDeep(base.systemSettings, meta.system_settings),
   }
 }
 
@@ -240,14 +245,16 @@ async function upsertMetaSnapshot(
   updatedAt: string,
 ): Promise<string> {
   const supabase = getSupabase()
+  const systemSettings = cloneSystemSettingsForPersist(snapshot.systemSettings, updatedAt)
+  const persistedSnapshot: HmsStoreSnapshot = { ...snapshot, systemSettings }
   const { data, error } = await supabase
     .from('hms_meta')
     .upsert({
       id: HMS_META_ID,
-      version: snapshot.version,
-      id_counter: snapshot.idCounter,
-      system_settings: snapshot.systemSettings,
-      full_snapshot: snapshot,
+      version: persistedSnapshot.version,
+      id_counter: persistedSnapshot.idCounter,
+      system_settings: systemSettings,
+      full_snapshot: persistedSnapshot,
       updated_at: updatedAt,
     })
     .select('id, updated_at')
@@ -270,30 +277,45 @@ async function upsertMetaSnapshot(
   return data.updated_at as string
 }
 
-/** Delete staff rows removed locally (e.g. after admin deletes a user) */
-async function deleteStaffRows(removedIds: string[]): Promise<void> {
-  if (removedIds.length === 0) return
+/** Hard delete mirror rows — verifies count (catches silent RLS DELETE blocks) */
+async function deleteMirrorRowsById(table: string, ids: string[]): Promise<void> {
+  if (ids.length === 0) return
   const supabase = getSupabase()
-  const { error } = await supabase.from('hms_staff_users').delete().in('id', removedIds)
-  if (error) throw new Error(error.message)
+  const { data, error } = await supabase.from(table).delete().in('id', ids).select('id')
+  if (error) {
+    throw new Error(
+      `${table} delete failed: ${error.message}. Run supabase/migrations/004_hms_rls_policies_and_grants.sql`,
+    )
+  }
+  const deletedCount = data?.length ?? 0
+  if (deletedCount < ids.length) {
+    throw new Error(
+      `${table}: only ${deletedCount}/${ids.length} rows deleted. Check RLS DELETE policy for anon role.`,
+    )
+  }
 }
 
-async function syncCollection<T extends { id: string }>(table: string, items: T[]): Promise<void> {
-  if (items.length === 0) return
+/** Delete staff rows removed locally (e.g. after admin deletes a user) */
+async function deleteStaffRows(removedIds: string[]): Promise<void> {
+  await deleteMirrorRowsById('hms_staff_users', removedIds)
+}
 
+/** Sync mirror table to match in-memory list — hard-deletes rows not in items (including empty list) */
+async function syncCollection<T extends { id: string }>(table: string, items: T[]): Promise<void> {
   const supabase = getSupabase()
   const ids = new Set(items.map((item) => item.id))
 
   const { data: existing, error: fetchError } = await supabase.from(table).select('id')
-  if (fetchError) throw new Error(fetchError.message)
+  if (fetchError) throw new Error(`${table} read failed: ${fetchError.message}`)
 
   const staleIds = (existing ?? []).map((row) => row.id).filter((id) => !ids.has(id))
   if (staleIds.length > 0) {
-    const { error: deleteError } = await supabase.from(table).delete().in('id', staleIds)
-    if (deleteError) throw new Error(deleteError.message)
+    await deleteMirrorRowsById(table, staleIds)
   }
 
-  await upsertMirrorRows(table, items)
+  if (items.length > 0) {
+    await upsertMirrorRows(table, items)
+  }
 }
 
 async function saveHmsToLegacyTables(snapshot: HmsStoreSnapshot): Promise<void> {
@@ -320,7 +342,10 @@ async function fetchCollectionWithMeta<T extends { id: string }>(
   const supabase = getSupabase()
   const { data, error } = await supabase.from(table).select('data, updated_at')
 
-  if (error) throw new Error(`${table} read failed: ${error.message}`)
+  if (error) {
+    if (isMissingTableError(error.message)) return []
+    throw new Error(`${table} read failed: ${error.message}`)
+  }
   return (data ?? []).map((row: { data: T; updated_at: string }) => ({
     item: row.data,
     updatedAt: row.updated_at,
@@ -435,7 +460,7 @@ function preferNewerVisitRows(
   return result
 }
 
-/** Pick row from mirror table or meta snapshot — whichever was updated most recently */
+/** Pick row from mirror table or meta snapshot — meta defines which IDs exist (deletes are not resurrected) */
 function preferNewerRows<T extends { id: string }>(
   snapshotRows: T[],
   tableRows: TableRowMeta<T>[],
@@ -444,7 +469,6 @@ function preferNewerRows<T extends { id: string }>(
   const snapMap = new Map(snapshotRows.map((r) => [r.id, r]))
   const tableMap = new Map(tableRows.map((r) => [r.item.id, r]))
   const snapBatchTime = Date.parse(snapshotBatchUpdatedAt) || 0
-  const ids = new Set([...snapMap.keys(), ...tableMap.keys()])
   const result: T[] = []
 
   const entityWriteTime = (item: unknown, rowUpdatedAt: string): number => {
@@ -454,15 +478,10 @@ function preferNewerRows<T extends { id: string }>(
     return rowTime
   }
 
-  for (const id of ids) {
-    const snap = snapMap.get(id)
+  for (const [id, snap] of snapMap) {
     const table = tableMap.get(id)
     if (!table) {
-      if (snap) result.push({ ...snap })
-      continue
-    }
-    if (!snap) {
-      result.push({ ...table.item })
+      result.push({ ...snap })
       continue
     }
     const tableTime = entityWriteTime(table.item, table.updatedAt)
@@ -472,7 +491,6 @@ function preferNewerRows<T extends { id: string }>(
     } else if (tableTime < snapTime) {
       result.push({ ...snap })
     } else {
-      // Equal timestamps — prefer table when it carries a fresher lastModifiedAt
       const tableMod = entityModifiedAt(table.item as WithModifiedAt)
       const snapMod = entityModifiedAt(snap as WithModifiedAt)
       result.push(tableMod >= snapMod ? { ...table.item } : { ...snap })
@@ -481,6 +499,138 @@ function preferNewerRows<T extends { id: string }>(
 
   return result
 }
+
+/** Patients — include mirror rows for IDs referenced by loaded visits (fixes register + refresh) */
+function preferNewerPatientRows(
+  snapshotPatients: Patient[],
+  tableRows: TableRowMeta<Patient>[],
+  snapshotBatchUpdatedAt: string,
+  visitPatientIds: Set<string>,
+): Patient[] {
+  const merged = preferNewerRows(snapshotPatients, tableRows, snapshotBatchUpdatedAt)
+  const mergedIds = new Set(merged.map((p) => p.id))
+  const tableMap = new Map(tableRows.map((r) => [r.item.id, r.item]))
+
+  for (const patientId of visitPatientIds) {
+    if (mergedIds.has(patientId)) continue
+    const fromTable = tableMap.get(patientId)
+    if (fromTable) {
+      merged.push({ ...fromTable })
+      mergedIds.add(patientId)
+    }
+  }
+
+  return merged
+}
+
+function collectVisitIds(visits: Visit[]): Set<string> {
+  return new Set(visits.map((v) => v.id))
+}
+
+function collectVisitPatientIds(visits: Visit[]): Set<string> {
+  return new Set(visits.map((v) => v.patientId).filter(Boolean))
+}
+
+/** Remove patient/visit workflow data — used when mirror tables were cleared but meta snapshot is stale */
+function stripPatientOperationalData(snapshot: HmsStoreSnapshot): HmsStoreSnapshot {
+  const empty = createEmptyHmsSnapshot()
+  const beds = (snapshot.beds ?? []).map((bed) => {
+    const copy = { ...bed }
+    delete copy.patientId
+    delete copy.admissionId
+    copy.isOccupied = false
+    return copy
+  })
+
+  return {
+    ...snapshot,
+    patients: [],
+    patientAccounts: [],
+    accountTransactions: [],
+    receptionReceipts: [],
+    visits: [],
+    clinicalNotes: [],
+    diagnoses: [],
+    prescriptions: [],
+    labRequests: [],
+    surgeryRequests: [],
+    admissionRequests: [],
+    admissions: [],
+    medicationAdministrations: [],
+    nursingNotes: [],
+    doctorOrders: [],
+    payments: [],
+    emergencyCases: [],
+    incomeRecords: [],
+    patientDiscounts: [],
+    obstetricDeliveries: [],
+    departmentSupplyRequests: empty.departmentSupplyRequests,
+    pharmacySupplyRequests: empty.pharmacySupplyRequests,
+    labSupplyRequests: empty.labSupplyRequests,
+    beds,
+  }
+}
+
+function mirrorPatientDataIsEmpty(tableByKey: Map<string, TableRowMeta<{ id: string }>[]>): boolean {
+  const patientRows = tableByKey.get('patients') ?? []
+  const visitRows = tableByKey.get('visits') ?? []
+  return patientRows.length === 0 && visitRows.length === 0
+}
+
+function isPatientDataClearActive(settings: HmsStoreSnapshot['systemSettings'] | undefined): boolean {
+  return Boolean(settings?.patientDataClearedAt)
+}
+
+function shouldStripPatientOperationalData(
+  snapshot: HmsStoreSnapshot,
+  tableByKey: Map<string, TableRowMeta<{ id: string }>[]>,
+): boolean {
+  if (!isPatientDataClearActive(snapshot.systemSettings)) return false
+  return mirrorPatientDataIsEmpty(tableByKey)
+}
+
+let patientMetaRepairInFlight = false
+
+async function repairStalePatientMetaIfNeeded(snapshot: HmsStoreSnapshot): Promise<void> {
+  if (patientMetaRepairInFlight) return
+  if ((snapshot.patients?.length ?? 0) === 0 && (snapshot.visits?.length ?? 0) === 0) return
+  patientMetaRepairInFlight = true
+  try {
+    await upsertMetaSnapshot(snapshot, new Date().toISOString())
+  } catch (err) {
+    console.warn('[HMS] Failed to repair cleared patient meta snapshot', err)
+  } finally {
+    patientMetaRepairInFlight = false
+  }
+}
+
+/** Include mirror rows linked to loaded visits (doctor lab/rx/note saves visible after refresh) */
+function preferNewerRowsForVisitLinked<T extends { id: string; visitId?: string }>(
+  snapshotRows: T[],
+  tableRows: TableRowMeta<T>[],
+  snapshotBatchUpdatedAt: string,
+  visitIds: Set<string>,
+): T[] {
+  const merged = preferNewerRows(snapshotRows, tableRows, snapshotBatchUpdatedAt)
+  const mergedIds = new Set(merged.map((r) => r.id))
+  for (const row of tableRows) {
+    if (mergedIds.has(row.item.id)) continue
+    if (row.item.visitId && visitIds.has(row.item.visitId)) {
+      merged.push({ ...row.item })
+    }
+  }
+  return merged
+}
+
+const VISIT_LINKED_COLLECTION_KEYS = [
+  'clinicalNotes',
+  'prescriptions',
+  'labRequests',
+  'surgeryRequests',
+  'admissionRequests',
+] as const
+
+const VISIT_LINKED_COLLECTION_KEY_SET = new Set<string>(VISIT_LINKED_COLLECTION_KEYS)
 
 function staffEntityWriteTime(item: StaffUser, rowUpdatedAt?: string): number {
   const rowTime = Date.parse(rowUpdatedAt ?? '') || 0
@@ -526,42 +676,33 @@ function preferNewerStaffRows(
   const snapMap = new Map(snapshotStaff.map((r) => [r.id, r]))
   const tableMap = new Map(tableRows.map((r) => [r.item.id, r]))
   const snapBatchTime = Date.parse(snapshotBatchUpdatedAt) || 0
-  const ids = new Set([...snapMap.keys(), ...tableMap.keys()])
   const result: StaffUser[] = []
 
-  for (const id of ids) {
-    const snap = snapMap.get(id)
+  for (const [id, snap] of snapMap) {
     const table = tableMap.get(id)
-    if (!table && snap) {
+    if (!table) {
       const copy = { ...snap }
       normalizeStaffUserEmail(copy)
       result.push(copy)
       continue
     }
-    if (!snap && table) {
-      const copy = { ...table.item }
-      normalizeStaffUserEmail(copy)
-      result.push(copy)
-      continue
-    }
-    if (snap && table) {
-      result.push(mergeStaffRecord(snap, table, snapBatchTime))
-    }
+    result.push(mergeStaffRecord(snap, table, snapBatchTime))
   }
 
   return result
 }
 
-/** Union by id — local entries win (prevents auto-save from wiping users created elsewhere) */
-function mergeCollectionsLocalWins<T extends { id: string }>(base: T[], local: T[]): T[] {
-  const merged = new Map<string, T>()
-  for (const item of base) merged.set(item.id, { ...item })
-  for (const item of local) merged.set(item.id, { ...item })
-  return Array.from(merged.values())
+type MergePreferNewerOptions = {
+  /** When true, IDs removed locally are not restored from remote (fixes delete + refresh). */
+  respectLocalDeletions?: boolean
 }
 
 /** Per-row merge — pick entity with newest lastModifiedAt; tie → local wins (in-memory edits) */
-function mergeCollectionsPreferNewer<T extends WithModifiedAt>(remote: T[], local: T[]): T[] {
+function mergeCollectionsPreferNewer<T extends WithModifiedAt>(
+  remote: T[],
+  local: T[],
+  options?: MergePreferNewerOptions,
+): T[] {
   const remoteMap = new Map(remote.map((r) => [r.id, r]))
   const localMap = new Map(local.map((r) => [r.id, r]))
   const ids = new Set([...remoteMap.keys(), ...localMap.keys()])
@@ -571,7 +712,7 @@ function mergeCollectionsPreferNewer<T extends WithModifiedAt>(remote: T[], loca
     const r = remoteMap.get(id)
     const l = localMap.get(id)
     if (!l) {
-      if (r) result.push({ ...r })
+      if (r && !options?.respectLocalDeletions) result.push({ ...r })
       continue
     }
     if (!r) {
@@ -594,31 +735,46 @@ type MergeResult = {
 
 type SnapshotCollectionKey = (typeof COLLECTION_TABLES)[number]['key']
 
+type MergeSnapshotOptions = {
+  /** Local in-memory list is complete — use for explicit CRUD saves (deletes must not be restored from remote). */
+  authoritativeKeys?: SnapshotCollectionKey[]
+}
+
 function mergeCollectionOnSave<K extends SnapshotCollectionKey>(
   remote: HmsStoreSnapshot,
   snapshot: HmsStoreSnapshot,
   key: K,
+  authoritativeKeys?: Set<SnapshotCollectionKey>,
 ): HmsStoreSnapshot[K] {
+  if (authoritativeKeys?.has(key)) {
+    return [...((snapshot[key] as HmsStoreSnapshot[K]) ?? [])] as HmsStoreSnapshot[K]
+  }
   if (key === 'visits') {
     return mergeVisitsPreferNewer(remote.visits ?? [], snapshot.visits ?? []) as HmsStoreSnapshot[K]
   }
   const remoteRows = (remote[key] as WithModifiedAt[]) ?? []
   const localRows = (snapshot[key] as WithModifiedAt[]) ?? []
-  return mergeCollectionsPreferNewer(remoteRows, localRows) as HmsStoreSnapshot[K]
+  return mergeCollectionsPreferNewer(remoteRows, localRows, {
+    respectLocalDeletions: true,
+  }) as HmsStoreSnapshot[K]
 }
 
 function buildMergedCollectionsOnSave(
   remote: HmsStoreSnapshot,
   snapshot: HmsStoreSnapshot,
+  authoritativeKeys?: Set<SnapshotCollectionKey>,
 ): Partial<HmsStoreSnapshot> {
   const merged: Partial<HmsStoreSnapshot> = {}
   for (const { key } of COLLECTION_TABLES) {
-    ;(merged as Record<string, unknown>)[key] = mergeCollectionOnSave(remote, snapshot, key)
+    ;(merged as Record<string, unknown>)[key] = mergeCollectionOnSave(remote, snapshot, key, authoritativeKeys)
   }
   return merged
 }
 
-async function mergeSnapshotWithRemoteBeforeSave(snapshot: HmsStoreSnapshot): Promise<MergeResult> {
+async function mergeSnapshotWithRemoteBeforeSave(
+  snapshot: HmsStoreSnapshot,
+  options?: MergeSnapshotOptions,
+): Promise<MergeResult> {
   const supabase = getSupabase()
   const { data: meta, error } = await supabase
     .from('hms_meta')
@@ -636,25 +792,32 @@ async function mergeSnapshotWithRemoteBeforeSave(snapshot: HmsStoreSnapshot): Pr
     }
   }
 
-  const staffUsers = mergeCollectionsLocalWins(remote.staffUsers ?? [], snapshot.staffUsers ?? []).map(
-    (staff) => {
-      const copy = { ...staff }
-      normalizeStaffUserEmail(copy)
-      return copy
-    },
-  )
+  const authoritativeKeys = new Set(options?.authoritativeKeys ?? [])
+  const staffAuthoritative = authoritativeKeys.has('staffUsers')
 
-  const localStaffIds = new Set(staffUsers.map((user) => user.id))
+  const staffUsers = (staffAuthoritative
+    ? snapshot.staffUsers ?? []
+    : mergeCollectionsPreferNewer(remote.staffUsers ?? [], snapshot.staffUsers ?? [], {
+        respectLocalDeletions: true,
+      })
+  ).map((staff) => {
+    const copy = { ...staff }
+    normalizeStaffUserEmail(copy)
+    return copy
+  })
+
+  const localStaffIds = new Set((snapshot.staffUsers ?? []).map((user) => user.id))
   const removedStaffIds = (remote.staffUsers ?? [])
     .map((user) => user.id)
     .filter((id) => !localStaffIds.has(id))
 
-  const mergedCollections = buildMergedCollectionsOnSave(remote, snapshot)
+  const mergedCollections = buildMergedCollectionsOnSave(remote, snapshot, authoritativeKeys)
 
   return {
     snapshot: ensureBootstrapStaffInSnapshot({
       ...snapshot,
       ...mergedCollections,
+      systemSettings: snapshot.systemSettings,
       idCounter: Math.max(snapshot.idCounter, remote.idCounter ?? snapshot.idCounter),
       staffUsers,
     }).snapshot,
@@ -699,12 +862,59 @@ async function enrichSnapshotWithOperationalTables(
         tableRows as TableRowMeta<Visit>[],
         snapshotBatchUpdatedAt,
       )
+    } else if (key === 'patients') {
+      continue
+    } else if (VISIT_LINKED_COLLECTION_KEY_SET.has(key)) {
+      continue
+    } else if (CATALOG_SNAPSHOT_TRUTH_KEYS.has(key)) {
+      ;(merged as Record<string, unknown>)[key] = mergeCatalogFromSnapshot(
+        snapshot,
+        key,
+        snapRows,
+        tableRows as TableRowMeta<{ id: string }>[],
+        snapshotBatchUpdatedAt,
+      )
     } else {
       ;(merged as Record<string, unknown>)[key] = pick(snapRows, tableRows)
     }
   }
 
+  const visitIds = collectVisitIds(merged.visits ?? [])
+  const patientTable = (tableByKey.get('patients') ?? []) as TableRowMeta<Patient>[]
+  merged.patients = preferNewerPatientRows(
+    snapshot.patients ?? [],
+    patientTable,
+    snapshotBatchUpdatedAt,
+    collectVisitPatientIds(merged.visits ?? []),
+  )
+
+  for (const key of VISIT_LINKED_COLLECTION_KEYS) {
+    const tableRows = tableByKey.get(key) ?? []
+    const snapRows = (snapshot[key] as { id: string; visitId?: string }[]) ?? []
+    ;(merged as Record<string, unknown>)[key] = preferNewerRowsForVisitLinked(
+      snapRows,
+      tableRows as TableRowMeta<{ id: string; visitId?: string }>[],
+      snapshotBatchUpdatedAt,
+      visitIds,
+    )
+  }
+
+  if (shouldStripPatientOperationalData(merged, tableByKey)) {
+    const hadGhostPatients =
+      (merged.patients?.length ?? 0) > 0 || (merged.visits?.length ?? 0) > 0
+    const stripped = stripPatientOperationalData(merged)
+    if (hadGhostPatients) {
+      void repairStalePatientMetaIfNeeded(stripped)
+    }
+    return ensureBootstrapStaffInSnapshot(stripped).snapshot
+  }
+
   return ensureBootstrapStaffInSnapshot(merged).snapshot
+}
+
+export type HmsFetchOptions = {
+  /** When true, merges all normalized table rows (slow — 30+ requests). Default false for instant load. */
+  enrich?: boolean
 }
 
 export type HmsMetaRefresh = {
@@ -715,6 +925,7 @@ export type HmsMetaRefresh = {
 /** Lightweight poll — returns null when remote data has not changed */
 export async function fetchHmsMetaIfUpdated(
   sinceUpdatedAt: string | null,
+  options?: HmsFetchOptions,
 ): Promise<HmsMetaRefresh | null> {
   const supabase = getSupabase()
 
@@ -731,10 +942,12 @@ export async function fetchHmsMetaIfUpdated(
   const cached = hydrateSnapshotFromMeta(meta)
   if (!cached) return null
 
-  return {
-    updatedAt: meta.updated_at as string,
-    snapshot: await enrichSnapshotWithOperationalTables(cached, meta.updated_at as string),
-  }
+  const updatedAt = meta.updated_at as string
+  const snapshot = options?.enrich
+    ? await enrichSnapshotWithOperationalTables(cached, updatedAt)
+    : cached
+
+  return { updatedAt, snapshot }
 }
 
 /** Legacy slow path — 33 parallel table reads (only if full_snapshot column missing) */
@@ -751,7 +964,12 @@ async function fetchHmsFromLegacyTables(meta: {
     ...createEmptyHmsSnapshot(),
     version: meta.version,
     idCounter: meta.id_counter,
-    systemSettings: meta.system_settings,
+    systemSettings: resolveSystemSettingsOnLoad(
+      createEmptyHmsSnapshot().systemSettings,
+      meta.system_settings,
+      null,
+      new Date().toISOString(),
+    ),
     ...Object.fromEntries(collections),
   } as HmsStoreSnapshot
 }
@@ -761,8 +979,8 @@ export type HmsFetchResult = {
   updatedAt: string
 }
 
-/** Fast path: single hms_meta request (~50–200ms vs 34 requests) */
-export async function fetchHmsFromTables(): Promise<HmsFetchResult | null> {
+/** Fast path: single hms_meta request (~50–200ms). Skips 30+ table reads unless enrich: true. */
+export async function fetchHmsFromTables(options?: HmsFetchOptions): Promise<HmsFetchResult | null> {
   const supabase = getSupabase()
 
   const { data: meta, error: metaError } = await supabase
@@ -780,12 +998,13 @@ export async function fetchHmsFromTables(): Promise<HmsFetchResult | null> {
         .maybeSingle()
       if (legacyError) throw new Error(legacyError.message)
       if (!legacyMeta) return null
+      const updatedAt = new Date().toISOString()
+      const legacySnapshot = await fetchHmsFromLegacyTables(legacyMeta)
       return {
-        snapshot: await enrichSnapshotWithOperationalTables(
-          await fetchHmsFromLegacyTables(legacyMeta),
-          new Date().toISOString(),
-        ),
-        updatedAt: new Date().toISOString(),
+        snapshot: options?.enrich
+          ? await enrichSnapshotWithOperationalTables(legacySnapshot, updatedAt)
+          : legacySnapshot,
+        updatedAt,
       }
     }
     if (isMissingTableError(metaError.message)) {
@@ -802,40 +1021,82 @@ export async function fetchHmsFromTables(): Promise<HmsFetchResult | null> {
   const cached = hydrateSnapshotFromMeta(meta)
   if (cached) {
     return {
-      snapshot: await enrichSnapshotWithOperationalTables(cached, updatedAt),
+      snapshot: options?.enrich
+        ? await enrichSnapshotWithOperationalTables(cached, updatedAt)
+        : cached,
       updatedAt,
     }
   }
 
+  const legacySnapshot = await fetchHmsFromLegacyTables(meta)
   return {
-    snapshot: await enrichSnapshotWithOperationalTables(await fetchHmsFromLegacyTables(meta), updatedAt),
+    snapshot: options?.enrich
+      ? await enrichSnapshotWithOperationalTables(legacySnapshot, updatedAt)
+      : legacySnapshot,
     updatedAt,
   }
 }
 
-/** Auto-save / background save — meta only (prevents stale bulk mirror overwrite) */
+/** Auto-save / background save — local in-memory state is truth (never restore deleted rows from remote meta) */
 export async function saveHmsToTables(snapshot: HmsStoreSnapshot): Promise<string> {
   const updatedAt = new Date().toISOString()
-  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot)
-  return upsertMetaSnapshot(safeSnapshot, updatedAt)
+  const supabase = getSupabase()
+  const [metaResult] = await Promise.all([
+    supabase.from('hms_meta').select('id_counter, system_settings').eq('id', HMS_META_ID).maybeSingle(),
+  ])
+  const { data: meta, error } = metaResult
+  if (error) throw new Error(error.message)
+
+  const remoteSettings = meta?.system_settings as HmsStoreSnapshot['systemSettings'] | undefined
+  const clearActive =
+    isPatientDataClearActive(remoteSettings) ||
+    isPatientDataClearActive(snapshot.systemSettings)
+
+  let payload = snapshot
+  if (clearActive) {
+    payload = stripPatientOperationalData(snapshot)
+    if (remoteSettings?.patientDataClearedAt || snapshot.systemSettings?.patientDataClearedAt) {
+      payload.systemSettings = {
+        ...payload.systemSettings,
+        patientDataClearedAt:
+          remoteSettings?.patientDataClearedAt ??
+          snapshot.systemSettings?.patientDataClearedAt,
+      }
+    }
+  }
+
+  const safeSnapshot = ensureBootstrapStaffInSnapshot({
+    ...payload,
+    idCounter: Math.max(payload.idCounter, meta?.id_counter ?? 0),
+  }).snapshot
+
+  const savedAt = await upsertMetaSnapshot(safeSnapshot, updatedAt)
+
+  await Promise.all([
+    syncCollection('hms_medicine_catalog', safeSnapshot.medicineCatalog ?? []),
+    syncCollection('hms_inventory_items', safeSnapshot.inventoryItems ?? []),
+  ])
+
+  return savedAt
 }
 
 /** Fast lab tests catalog save — hms_lab_test_catalog + meta (Test ID settings) */
 export async function saveLabCatalogSnapshotToSupabase(snapshot: HmsStoreSnapshot): Promise<string> {
   const updatedAt = new Date().toISOString()
-  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot)
+  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot, {
+    authoritativeKeys: ['labTestCatalog'],
+  })
   const persistedSnapshot: HmsStoreSnapshot = {
     ...safeSnapshot,
-    labTestCatalog: (safeSnapshot.labTestCatalog ?? []).map((t) => ({ ...t })),
+    labTestCatalog: (safeSnapshot.labTestCatalog ?? []).map((t) => ({
+      ...t,
+      lastModifiedAt: t.lastModifiedAt ?? updatedAt,
+    })),
   }
 
   const savedAt = await upsertMetaSnapshot(persistedSnapshot, updatedAt)
 
-  await Promise.all(
-    CATALOG_MIRROR_TABLES.map(({ key, table }) =>
-      upsertMirrorRows(table, persistedSnapshot[key] as { id: string }[], { verify: false }),
-    ),
-  )
+  await syncCollection('hms_lab_test_catalog', persistedSnapshot.labTestCatalog ?? [])
 
   return savedAt
 }
@@ -843,7 +1104,9 @@ export async function saveLabCatalogSnapshotToSupabase(snapshot: HmsStoreSnapsho
 /** Fast medical catalog save — medicines + inventory + meta */
 export async function saveMedicalCatalogSnapshotToSupabase(snapshot: HmsStoreSnapshot): Promise<string> {
   const updatedAt = new Date().toISOString()
-  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot)
+  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot, {
+    authoritativeKeys: ['medicineCatalog', 'inventoryItems'],
+  })
   const persistedSnapshot: HmsStoreSnapshot = {
     ...safeSnapshot,
     medicineCatalog: (safeSnapshot.medicineCatalog ?? []).map((m) => ({ ...m })),
@@ -863,7 +1126,9 @@ export async function saveMedicalCatalogSnapshotToSupabase(snapshot: HmsStoreSna
 /** Fast surgery catalog save — hms_surgery_catalog + meta */
 export async function saveSurgeryCatalogSnapshotToSupabase(snapshot: HmsStoreSnapshot): Promise<string> {
   const updatedAt = new Date().toISOString()
-  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot)
+  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot, {
+    authoritativeKeys: ['surgeryCatalog'],
+  })
   const persistedSnapshot: HmsStoreSnapshot = {
     ...safeSnapshot,
     surgeryCatalog: (safeSnapshot.surgeryCatalog ?? []).map((s) => ({ ...s })),
@@ -879,7 +1144,9 @@ export async function saveSurgeryCatalogSnapshotToSupabase(snapshot: HmsStoreSna
 /** Fast rooms & beds save — wards, rooms, beds tables + meta */
 export async function saveRoomsBedsSnapshotToSupabase(snapshot: HmsStoreSnapshot): Promise<string> {
   const updatedAt = new Date().toISOString()
-  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot)
+  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot, {
+    authoritativeKeys: ['wards', 'rooms', 'beds'],
+  })
   const persistedSnapshot: HmsStoreSnapshot = {
     ...safeSnapshot,
     wards: (safeSnapshot.wards ?? []).map((w) => ({
@@ -910,7 +1177,9 @@ export async function saveRoomsBedsSnapshotToSupabase(snapshot: HmsStoreSnapshot
 /** Fast staff save for Add/Edit User — 2 requests instead of 5+ */
 export async function saveStaffUsersToSupabase(snapshot: HmsStoreSnapshot): Promise<string> {
   const updatedAt = new Date().toISOString()
-  const { snapshot: safeSnapshot, removedStaffIds } = await mergeSnapshotWithRemoteBeforeSave(snapshot)
+  const { snapshot: safeSnapshot, removedStaffIds } = await mergeSnapshotWithRemoteBeforeSave(snapshot, {
+    authoritativeKeys: ['staffUsers'],
+  })
 
   const savedAt = await upsertMetaSnapshot(safeSnapshot, updatedAt)
 
@@ -947,21 +1216,96 @@ export async function savePatientProfileToSupabase(patient: Patient): Promise<st
   return upsertMetaSnapshot(fullSnapshot, updatedAt)
 }
 
+/** Fast patient release — cancel labs/surgery/admit for visit, complete visit, sync mirrors */
+export async function savePatientReleaseSnapshotToSupabase(
+  snapshot: HmsStoreSnapshot,
+  visitId: string,
+): Promise<string> {
+  const updatedAt = new Date().toISOString()
+  const visit = (snapshot.visits ?? []).find((v) => v.id === visitId)
+  if (!visit) throw new Error(`Visit ${visitId} not found for release save`)
+
+  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot, {
+    authoritativeKeys: [
+      'labRequests',
+      'surgeryRequests',
+      'admissionRequests',
+      'visits',
+      'patients',
+    ],
+  })
+
+  const stamp = <T extends { lastModifiedAt?: string }>(rows: T[]) =>
+    rows.map((r) => ({ ...r, lastModifiedAt: r.lastModifiedAt ?? updatedAt }))
+
+  const persistedSnapshot: HmsStoreSnapshot = {
+    ...safeSnapshot,
+    labRequests: stamp(safeSnapshot.labRequests ?? []),
+    surgeryRequests: stamp(safeSnapshot.surgeryRequests ?? []),
+    admissionRequests: stamp(safeSnapshot.admissionRequests ?? []),
+    visits: stamp(safeSnapshot.visits ?? []),
+    patients: (safeSnapshot.patients ?? []).map((p) => ({
+      ...p,
+      lastModifiedAt: p.lastModifiedAt ?? updatedAt,
+    })),
+  }
+
+  const visitRow = (persistedSnapshot.visits ?? []).find((v) => v.id === visitId)
+  const patientRow = (persistedSnapshot.patients ?? []).find((p) => p.id === visit.patientId)
+  const visitLabs = (persistedSnapshot.labRequests ?? []).filter((l) => l.visitId === visitId)
+  const visitSurgeries = (persistedSnapshot.surgeryRequests ?? []).filter((s) => s.visitId === visitId)
+  const visitAdmissions = (persistedSnapshot.admissionRequests ?? []).filter((a) => a.visitId === visitId)
+
+  await Promise.all([
+    visitLabs.length > 0
+      ? upsertMirrorRows('hms_lab_requests', visitLabs, { verify: true })
+      : Promise.resolve(),
+    visitSurgeries.length > 0
+      ? upsertMirrorRows('hms_surgery_requests', visitSurgeries, { verify: true })
+      : Promise.resolve(),
+    visitAdmissions.length > 0
+      ? upsertMirrorRows('hms_admission_requests', visitAdmissions, { verify: true })
+      : Promise.resolve(),
+    visitRow ? upsertMirrorRows('hms_visits', [visitRow], { verify: true }) : Promise.resolve(),
+    patientRow ? upsertMirrorRows('hms_patients', [patientRow], { verify: true }) : Promise.resolve(),
+  ])
+
+  return upsertMetaSnapshot(persistedSnapshot, updatedAt)
+}
+
 /** Fast doctor consultation save — notes, prescriptions, labs, surgery, admissions, nurse orders */
 export async function saveDoctorConsultationSnapshotToSupabase(
   snapshot: HmsStoreSnapshot,
   focus?: { visitId?: string; patientId?: string },
 ): Promise<string> {
   const updatedAt = new Date().toISOString()
-  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot)
+  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot, {
+    authoritativeKeys: [
+      'clinicalNotes',
+      'prescriptions',
+      'labRequests',
+      'surgeryRequests',
+      'admissionRequests',
+      'doctorOrders',
+      'visits',
+    ],
+  })
+  const stamp = <T extends { lastModifiedAt?: string }>(rows: T[]) =>
+    rows.map((r) => ({ ...r, lastModifiedAt: r.lastModifiedAt ?? updatedAt }))
+
   const persistedSnapshot: HmsStoreSnapshot = {
     ...safeSnapshot,
-    clinicalNotes: (safeSnapshot.clinicalNotes ?? []).map((n) => ({ ...n })),
-    prescriptions: (safeSnapshot.prescriptions ?? []).map((p) => ({ ...p })),
-    labRequests: (safeSnapshot.labRequests ?? []).map((l) => ({ ...l })),
-    surgeryRequests: (safeSnapshot.surgeryRequests ?? []).map((s) => ({ ...s })),
-    admissionRequests: (safeSnapshot.admissionRequests ?? []).map((a) => ({ ...a })),
-    doctorOrders: (safeSnapshot.doctorOrders ?? []).map((o) => ({ ...o })),
+    clinicalNotes: stamp(safeSnapshot.clinicalNotes ?? []),
+    prescriptions: stamp(safeSnapshot.prescriptions ?? []),
+    labRequests: stamp(safeSnapshot.labRequests ?? []),
+    surgeryRequests: stamp(safeSnapshot.surgeryRequests ?? []),
+    admissionRequests: stamp(safeSnapshot.admissionRequests ?? []),
+    doctorOrders: stamp(safeSnapshot.doctorOrders ?? []),
+    visits: stamp(safeSnapshot.visits ?? []),
+    patients: (safeSnapshot.patients ?? []).map((p) => ({
+      ...p,
+      lastModifiedAt: p.lastModifiedAt ?? updatedAt,
+    })),
   }
 
   const savedAt = await upsertMetaSnapshot(persistedSnapshot, updatedAt)
@@ -984,23 +1328,20 @@ export async function saveDoctorConsultationSnapshotToSupabase(
   return savedAt
 }
 
-/** Fast system settings save — meta + staff mirror (registration fees live on staff rows) */
+/** Fast system settings save — writes local settings directly (discount limits must not be merged from remote) */
 export async function saveSystemSettingsSnapshotToSupabase(
   snapshot: HmsStoreSnapshot,
 ): Promise<string> {
   const updatedAt = new Date().toISOString()
-  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot)
-  const persistedSnapshot: HmsStoreSnapshot = {
-    ...safeSnapshot,
-    systemSettings: {
-      ...safeSnapshot.systemSettings,
-      lastModifiedAt: updatedAt,
-    },
-    staffUsers: (safeSnapshot.staffUsers ?? []).map((staff) => ({
+  const systemSettings = cloneSystemSettingsForPersist(snapshot.systemSettings, updatedAt)
+  const persistedSnapshot = ensureBootstrapStaffInSnapshot({
+    ...snapshot,
+    systemSettings,
+    staffUsers: (snapshot.staffUsers ?? []).map((staff) => ({
       ...staff,
       lastModifiedAt: staff.lastModifiedAt ?? updatedAt,
     })),
-  }
+  }).snapshot
 
   const savedAt = await upsertMetaSnapshot(persistedSnapshot, updatedAt)
   await upsertMirrorRows('hms_staff_users', persistedSnapshot.staffUsers, { verify: false })
@@ -1119,10 +1460,14 @@ export async function saveLabRequestSnapshotToSupabase(
   if (metaFetchError) throw new Error(metaFetchError.message)
 
   const remote = (meta?.full_snapshot as HmsStoreSnapshot | null) ?? createEmptyHmsSnapshot()
+  const visitRow = visit ? { ...visit, lastModifiedAt: updatedAt } : undefined
   const fullSnapshot: HmsStoreSnapshot = {
     ...createEmptyHmsSnapshot(),
     ...remote,
     labRequests: mergeCollectionsPreferNewer(remote.labRequests ?? [], [labRow]),
+    visits: visitRow
+      ? mergeCollectionsPreferNewer(remote.visits ?? [], [visitRow])
+      : (remote.visits ?? []),
   }
 
   return upsertMetaSnapshot(fullSnapshot, updatedAt)
@@ -1133,11 +1478,19 @@ export async function saveRegistrationSnapshotToSupabase(
   snapshot: HmsStoreSnapshot,
 ): Promise<string> {
   const updatedAt = new Date().toISOString()
-  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot)
+  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot, {
+    authoritativeKeys: ['patients', 'visits', 'payments', 'incomeRecords', 'receptionReceipts'],
+  })
   const persistedSnapshot: HmsStoreSnapshot = {
     ...safeSnapshot,
-    patients: (safeSnapshot.patients ?? []).map((p) => ({ ...p })),
-    visits: (safeSnapshot.visits ?? []).map((v) => ({ ...v })),
+    patients: (safeSnapshot.patients ?? []).map((p) => ({
+      ...p,
+      lastModifiedAt: p.lastModifiedAt ?? updatedAt,
+    })),
+    visits: (safeSnapshot.visits ?? []).map((v) => ({
+      ...v,
+      lastModifiedAt: v.lastModifiedAt ?? updatedAt,
+    })),
   }
 
   const savedAt = await upsertMetaSnapshot(persistedSnapshot, updatedAt)
@@ -1156,7 +1509,15 @@ export async function saveSurgeryFeePaymentSnapshotToSupabase(
   snapshot: HmsStoreSnapshot,
 ): Promise<string> {
   const updatedAt = new Date().toISOString()
-  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot)
+  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot, {
+    authoritativeKeys: [
+      'surgeryRequests',
+      'visits',
+      'payments',
+      'incomeRecords',
+      'receptionReceipts',
+    ],
+  })
   const persistedSnapshot: HmsStoreSnapshot = {
     ...safeSnapshot,
     surgeryRequests: (safeSnapshot.surgeryRequests ?? []).map((s) => ({ ...s })),
@@ -1195,6 +1556,7 @@ export async function saveInpatientPaymentSnapshotToSupabase(
     receptionReceipts: (safeSnapshot.receptionReceipts ?? []).map((r) => ({ ...r })),
     patientAccounts: (safeSnapshot.patientAccounts ?? []).map((a) => ({ ...a })),
     accountTransactions: (safeSnapshot.accountTransactions ?? []).map((t) => ({ ...t })),
+    prescriptions: (safeSnapshot.prescriptions ?? []).map((p) => ({ ...p })),
   }
 
   const savedAt = await upsertMetaSnapshot(persistedSnapshot, updatedAt)
@@ -1232,6 +1594,84 @@ export async function savePatientDiscountSnapshotToSupabase(
       upsertMirrorRows(table, persistedSnapshot[key] as { id: string }[], { verify: false }),
     ),
   ])
+
+  return savedAt
+}
+
+/** Fast obstetric delivery save — registrations + payments + income + receipts */
+export async function saveObstetricDeliverySnapshotToSupabase(
+  snapshot: HmsStoreSnapshot,
+): Promise<string> {
+  const updatedAt = new Date().toISOString()
+  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot, {
+    authoritativeKeys: ['obstetricDeliveries', 'payments', 'incomeRecords', 'receptionReceipts'],
+  })
+  const persistedSnapshot: HmsStoreSnapshot = {
+    ...safeSnapshot,
+    obstetricDeliveries: (safeSnapshot.obstetricDeliveries ?? []).map((d) => ({
+      ...d,
+      lastModifiedAt: d.lastModifiedAt ?? updatedAt,
+    })),
+    payments: (safeSnapshot.payments ?? []).map((p) => ({ ...p })),
+    incomeRecords: (safeSnapshot.incomeRecords ?? []).map((i) => ({ ...i })),
+    receptionReceipts: (safeSnapshot.receptionReceipts ?? []).map((r) => ({ ...r })),
+  }
+
+  const savedAt = await upsertMetaSnapshot(persistedSnapshot, updatedAt)
+
+  try {
+    await syncCollection(
+      'hms_obstetric_deliveries',
+      persistedSnapshot.obstetricDeliveries ?? [],
+    )
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    if (isMissingTableError(message)) {
+      throw new Error(
+        `${message}\n\nRun supabase/migrations/007_hms_obstetric_deliveries.sql in Supabase SQL Editor.`,
+      )
+    }
+    throw err
+  }
+
+  await Promise.all(
+    RECEPTION_PAYMENT_MIRROR_TABLES.map(({ key, table }) =>
+      upsertMirrorRows(table, persistedSnapshot[key] as { id: string }[], { verify: false }),
+    ),
+  )
+
+  return savedAt
+}
+
+/** Admin confirms doctor monthly commission — payout records only */
+export async function saveDoctorCommissionPayoutSnapshotToSupabase(
+  snapshot: HmsStoreSnapshot,
+): Promise<string> {
+  const updatedAt = new Date().toISOString()
+  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot, {
+    authoritativeKeys: ['doctorCommissionPayouts'],
+  })
+  const persistedSnapshot: HmsStoreSnapshot = {
+    ...safeSnapshot,
+    doctorCommissionPayouts: (safeSnapshot.doctorCommissionPayouts ?? []).map((p) => ({ ...p })),
+  }
+
+  const savedAt = await upsertMetaSnapshot(persistedSnapshot, updatedAt)
+
+  try {
+    await syncCollection(
+      'hms_doctor_commission_payouts',
+      persistedSnapshot.doctorCommissionPayouts ?? [],
+    )
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    if (isMissingTableError(message)) {
+      throw new Error(
+        `${message}\n\nRun supabase/migrations/008_hms_doctor_commission_payouts.sql in Supabase SQL Editor.`,
+      )
+    }
+    throw err
+  }
 
   return savedAt
 }
@@ -1279,12 +1719,16 @@ const SUPPLY_MIRROR_TABLES: {
     | 'pharmacySupplyRequests'
     | 'labSupplyRequests'
     | 'inventoryItems'
+    | 'stockTransactions'
+    | 'medicineCatalog'
   table: string
 }[] = [
   { key: 'departmentSupplyRequests', table: 'hms_department_supply_requests' },
   { key: 'pharmacySupplyRequests', table: 'hms_pharmacy_supply_requests' },
   { key: 'labSupplyRequests', table: 'hms_lab_supply_requests' },
   { key: 'inventoryItems', table: 'hms_inventory_items' },
+  { key: 'stockTransactions', table: 'hms_stock_transactions' },
+  { key: 'medicineCatalog', table: 'hms_medicine_catalog' },
 ]
 
 async function saveMirrorGroupSnapshot(
@@ -1306,7 +1750,28 @@ async function saveMirrorGroupSnapshot(
 export async function saveAdmissionAssignmentSnapshotToSupabase(
   snapshot: HmsStoreSnapshot,
 ): Promise<string> {
-  return saveMirrorGroupSnapshot(snapshot, ADMISSION_ASSIGNMENT_MIRROR_TABLES)
+  const updatedAt = new Date().toISOString()
+  const { snapshot: safeSnapshot } = await mergeSnapshotWithRemoteBeforeSave(snapshot, {
+    authoritativeKeys: ['admissionRequests', 'admissions', 'beds', 'visits'],
+  })
+  const persistedSnapshot: HmsStoreSnapshot = {
+    ...safeSnapshot,
+    admissionRequests: (safeSnapshot.admissionRequests ?? []).map((a) => ({
+      ...a,
+      lastModifiedAt: a.lastModifiedAt ?? updatedAt,
+    })),
+    visits: (safeSnapshot.visits ?? []).map((v) => ({
+      ...v,
+      lastModifiedAt: v.lastModifiedAt ?? updatedAt,
+    })),
+  }
+  const savedAt = await upsertMetaSnapshot(persistedSnapshot, updatedAt)
+  await Promise.all(
+    ADMISSION_ASSIGNMENT_MIRROR_TABLES.map(({ key, table }) =>
+      upsertMirrorRows(table, (persistedSnapshot[key] as { id: string }[]) ?? [], { verify: false }),
+    ),
+  )
+  return savedAt
 }
 
 /** Emergency case register / edit */

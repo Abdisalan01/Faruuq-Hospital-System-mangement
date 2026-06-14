@@ -18,6 +18,8 @@ import type {
   MedicineCatalogItem,
   MedicationAdministration,
   NursingNote,
+  ObstetricDelivery,
+  DoctorCommissionPayout,
   Patient,
   PatientAccount,
   PatientDiscount,
@@ -47,6 +49,7 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
   registrationFee: 10,
   doctorPatientNumberFee: 50,
   emergencyPatientNumberFee: 30,
+  obstetricianFee: 75,
   medicineCodePrefix: 'MED',
   medicineCodeStartNumber: 1,
   medicineCodeNextNumber: 1,
@@ -63,6 +66,65 @@ export const DEFAULT_SYSTEM_SETTINGS: SystemSettings = {
     reception: { registration: 10, lab: 15, surgery: 20, inpatient: 25 },
     pharmacy: { dispensing: 10 },
   },
+}
+
+/** Deep-merge discount limits and top-level settings (load from meta column + full_snapshot). */
+export function mergeSystemSettingsDeep(
+  base: SystemSettings,
+  ...sources: Array<SystemSettings | null | undefined>
+): SystemSettings {
+  const merged: SystemSettings = {
+    ...base,
+    discountLimits: {
+      reception: { ...base.discountLimits.reception },
+      pharmacy: { ...base.discountLimits.pharmacy },
+    },
+  }
+
+  for (const source of sources) {
+    if (!source) continue
+    Object.assign(merged, source)
+    if (source.discountLimits?.reception) {
+      merged.discountLimits.reception = {
+        ...merged.discountLimits.reception,
+        ...source.discountLimits.reception,
+      }
+    }
+    if (source.discountLimits?.pharmacy) {
+      merged.discountLimits.pharmacy = {
+        ...merged.discountLimits.pharmacy,
+        ...source.discountLimits.pharmacy,
+      }
+    }
+  }
+
+  return merged
+}
+
+/** Pick newer system_settings vs full_snapshot.systemSettings, then deep-merge discount limits. */
+export function resolveSystemSettingsOnLoad(
+  base: SystemSettings,
+  columnSettings: SystemSettings | null | undefined,
+  snapshotSettings: SystemSettings | null | undefined,
+  metaUpdatedAt: string,
+): SystemSettings {
+  const col = columnSettings ?? null
+  const snap = snapshotSettings ?? null
+  const colTime = Date.parse(col?.lastModifiedAt ?? '') || 0
+  const snapTime = Date.parse(snap?.lastModifiedAt ?? '') || Date.parse(metaUpdatedAt) || 0
+  const primary = snapTime >= colTime ? snap : col
+  const secondary = snapTime >= colTime ? col : snap
+  return mergeSystemSettingsDeep(base, secondary, primary)
+}
+
+/** Ensure nested discountLimits are always present before writing hms_meta. */
+export function cloneSystemSettingsForPersist(
+  settings: SystemSettings,
+  updatedAt?: string,
+): SystemSettings {
+  const cloned = mergeSystemSettingsDeep(DEFAULT_SYSTEM_SETTINGS, settings)
+  if (updatedAt) cloned.lastModifiedAt = updatedAt
+  return cloned
 }
 
 /** Single bootstrap admin — create other staff via Admin → Users */
@@ -102,6 +164,8 @@ export const EMPTY_MEDICINE_CATALOG: MedicineCatalogItem[] = []
 export const EMPTY_SURGERY_CATALOG: SurgeryCatalog[] = []
 export const EMPTY_DISCOUNTS: Discount[] = []
 export const EMPTY_PATIENT_DISCOUNTS: PatientDiscount[] = []
+export const EMPTY_OBSTETRIC_DELIVERIES: ObstetricDelivery[] = []
+export const EMPTY_DOCTOR_COMMISSION_PAYOUTS: DoctorCommissionPayout[] = []
 export const EMPTY_ADMISSIONS: Admission[] = []
 export const EMPTY_MEDICATION_ADMINISTRATIONS: MedicationAdministration[] = []
 export const EMPTY_NURSING_NOTES: NursingNote[] = []
@@ -140,6 +204,8 @@ export type HmsEmptySnapshot = {
   surgeryCatalog: SurgeryCatalog[]
   discounts: Discount[]
   patientDiscounts: PatientDiscount[]
+  obstetricDeliveries: ObstetricDelivery[]
+  doctorCommissionPayouts: DoctorCommissionPayout[]
   admissions: Admission[]
   medicationAdministrations: MedicationAdministration[]
   nursingNotes: NursingNote[]
@@ -206,6 +272,8 @@ export function createEmptyHmsSnapshot(): HmsEmptySnapshot {
     surgeryCatalog: [...EMPTY_SURGERY_CATALOG],
     discounts: [...EMPTY_DISCOUNTS],
     patientDiscounts: [...EMPTY_PATIENT_DISCOUNTS],
+    obstetricDeliveries: [...EMPTY_OBSTETRIC_DELIVERIES],
+    doctorCommissionPayouts: [...EMPTY_DOCTOR_COMMISSION_PAYOUTS],
     admissions: [...EMPTY_ADMISSIONS],
     medicationAdministrations: [...EMPTY_MEDICATION_ADMINISTRATIONS],
     nursingNotes: [...EMPTY_NURSING_NOTES],

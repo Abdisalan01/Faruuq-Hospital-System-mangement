@@ -8,6 +8,8 @@ import { useAuthContext } from '@/context/useAuthContext'
 import { useHmsStoreContext } from '@/context/HmsStoreContext'
 import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
+import TablePagination from '@/shared/components/TablePagination'
+import { useTablePagination } from '@/shared/hooks/useTablePagination'
 import {
   addAccountPayment,
   getPatientById,
@@ -24,6 +26,16 @@ const PatientCreditPage = () => {
   const [paymentAmount, setPaymentAmount] = useState('')
 
   const accounts = patientAccounts.filter((a) => a.outstandingBalance > 0)
+
+  const {
+    pageItems,
+    setPage,
+    safePage,
+    totalPages,
+    rangeStart,
+    rangeEnd,
+    totalItems,
+  } = useTablePagination(patientAccounts, 10, [patientAccounts.length, refresh])
 
   const openPaymentModal = (patientId: string, balance: number) => {
     setSelectedPatientId(patientId)
@@ -78,7 +90,7 @@ const PatientCreditPage = () => {
                     </td>
                   </tr>
                 ) : (
-                  patientAccounts.map((account) => {
+                  pageItems.map((account) => {
                     const patient = getPatientById(account.patientId)
                     return (
                       <tr key={account.id}>
@@ -111,6 +123,15 @@ const PatientCreditPage = () => {
               </tbody>
             </Table>
           </div>
+          <TablePagination
+            className="pt-3 border-top mt-3"
+            totalItems={totalItems}
+            rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
+            safePage={safePage}
+            totalPages={totalPages}
+            onPageChange={setPage}
+          />
           {accounts.length > 0 && (
             <p className="text-muted mt-3 mb-0">
               Total outstanding: {currency}

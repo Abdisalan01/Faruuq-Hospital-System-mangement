@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "format": "prettier --write 'src/**/*.{ts,tsx,js,jsx}'",
     "db:setup": "node scripts/setup-supabase-db.mjs",
-    "db:reset": "node scripts/reset-supabase-db.mjs"
+    "db:reset": "node scripts/reset-supabase-db.mjs",
+    "db:clear-patients": "node scripts/clear-patient-data.mjs",
+    "db:clear-patients-api": "node scripts/clear-patient-data-api.mjs"
   },
   "dependencies": {
     "@fullcalendar/bootstrap": "^6.1.19",

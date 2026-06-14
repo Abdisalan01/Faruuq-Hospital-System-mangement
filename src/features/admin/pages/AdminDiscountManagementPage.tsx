@@ -34,10 +34,24 @@ const AdminDiscountManagementPage = () => {
   const save = async () => {
     setError('')
     setMessage('')
+
+    const allPercents = [
+      ...Object.values(limits.reception),
+      limits.pharmacy.dispensing,
+    ]
+    if (allPercents.some((p) => Number.isNaN(p) || p < 0 || p > 100)) {
+      setError('All discount limits must be between 0% and 100%.')
+      return
+    }
+
     setSaving(true)
     try {
       updateDiscountLimits(limits)
       if (isSupabase) await persistSystemSettingsNowAsync()
+      setLimits({
+        reception: { ...systemSettings.discountLimits.reception },
+        pharmacy: { ...systemSettings.discountLimits.pharmacy },
+      })
       setMessage(
         isSupabase
           ? 'Discount limits saved to database. Reception and pharmacy will use these maximums.'
@@ -50,17 +64,22 @@ const AdminDiscountManagementPage = () => {
     }
   }
 
+  const clampPercent = (value: number) => {
+    if (Number.isNaN(value)) return 0
+    return Math.max(0, Math.min(100, value))
+  }
+
   const updateReception = (key: keyof DiscountLimitsSettings['reception'], value: number) => {
     setLimits((prev) => ({
       ...prev,
-      reception: { ...prev.reception, [key]: Math.max(0, Math.min(100, value)) },
+      reception: { ...prev.reception, [key]: clampPercent(value) },
     }))
   }
 
   const updatePharmacy = (value: number) => {
     setLimits((prev) => ({
       ...prev,
-      pharmacy: { dispensing: Math.max(0, Math.min(100, value)) },
+      pharmacy: { dispensing: clampPercent(value) },
     }))
   }
 

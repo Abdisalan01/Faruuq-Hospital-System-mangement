@@ -8,6 +8,8 @@ import { useHmsStoreContext } from '@/context/HmsStoreContext'
 import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
 import StatusBadge from '@/shared/components/StatusBadge'
+import TablePagination from '@/shared/components/TablePagination'
+import { useTablePagination } from '@/shared/hooks/useTablePagination'
 import {
   getDisplayVisitForPatient,
   getPatientById,
@@ -23,7 +25,7 @@ import {
 } from '@/shared/utils/visitConsultation'
 
 const ReceptionActivatePatientPage = () => {
-  const { dataVersion, isReady, isSupabase } = useHmsStoreContext()
+  const { dataVersion, isSupabase } = useHmsStoreContext()
   const [search, setSearch] = useState('')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
@@ -43,6 +45,16 @@ const ReceptionActivatePatientPage = () => {
         p.id.toLowerCase().includes(q),
     )
   }, [inactivePatients, search, dataVersion])
+
+  const {
+    pageItems,
+    setPage,
+    safePage,
+    totalPages,
+    rangeStart,
+    rangeEnd,
+    totalItems,
+  } = useTablePagination(filtered, 10, [filtered.length, search, dataVersion])
 
   const handleActivate = async (patientId: string) => {
     setError('')
@@ -83,18 +95,6 @@ const ReceptionActivatePatientPage = () => {
     } finally {
       setSavingId(null)
     }
-  }
-
-  if (!isReady) {
-    return (
-      <PermissionGuard permissions={['register_patients']}>
-        <PageMetaData title="Activate Patient" />
-        <div className="d-flex flex-column align-items-center justify-content-center py-5 gap-2">
-          <div className="spinner-border spinner-border-sm text-primary" role="status" />
-          <p className="text-muted mb-0 small">Loading…</p>
-        </div>
-      </PermissionGuard>
-    )
   }
 
   return (
@@ -165,7 +165,7 @@ const ReceptionActivatePatientPage = () => {
                     </td>
                   </tr>
                 ) : (
-                  filtered.map((patient) => {
+                  pageItems.map((patient) => {
                     const info = getFollowUpActivationInfo(patient.id)
                     const lastVisit = info.lastVisit
                     const displayVisit = getDisplayVisitForPatient(patient.id)
@@ -233,6 +233,16 @@ const ReceptionActivatePatientPage = () => {
                 )}
               </tbody>
             </Table>
+          </div>
+          <div className="p-3 border-top">
+            <TablePagination
+              totalItems={totalItems}
+              rangeStart={rangeStart}
+              rangeEnd={rangeEnd}
+              safePage={safePage}
+              totalPages={totalPages}
+              onPageChange={setPage}
+            />
           </div>
         </CardBody>
       </Card>

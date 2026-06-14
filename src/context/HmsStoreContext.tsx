@@ -2,17 +2,19 @@ import { createContext, useCallback, useContext, useEffect, useRef, useState, ty
 
 import SupabaseSetupError from '@/components/SupabaseSetupError'
 import { ensureBootstrapStaffInSnapshot } from '@/shared/services/hmsEmptyState'
+import { getSupabase } from '@/shared/lib/supabase'
 import {
   applyHmsStoreSnapshot,
   applyRemoteHmsStoreSnapshot,
   exportHmsStoreSnapshot,
   getHmsStoreRevision,
   getHmsStoreSeedSnapshot,
+  registerStoreChangeNotifier,
   registerSupabasePersistence,
   registerSupabaseSaveNotifier,
   type HmsStoreSnapshot,
 } from '@/shared/services/hmsStore'
-import { clearHmsLocalStorage, flushPersistAsync, hasPendingPersist } from '@/shared/services/hmsStorePersistence'
+import { clearHmsLocalStorage, clearStoreDirty, flushPersistAsync, hasPendingPersist } from '@/shared/services/hmsStorePersistence'
 import {
   fetchHmsWithMetaFromSupabase,
   isSupabaseBackendEnabled,
@@ -20,7 +22,9 @@ import {
   saveHmsSnapshotToSupabase,
 } from '@/shared/services/hmsSupabaseSync'
 
-const SUPABASE_POLL_MS = 3_000
+const SUPABASE_POLL_MS = 8_000
+const REFRESH_DEBOUNCE_MS = 400
+const HMS_META_ROW_ID = 'main'
 
 type HmsStoreContextType = {
   isReady: boolean
@@ -28,6 +32,7 @@ type HmsStoreContextType = {
   error: string | null
   /** Increments when data reloads from Supabase — all role dashboards stay in sync */
   dataVersion: number
+  /** Lightweight meta sync (default). Full bootstrap only on first load or error retry. */
   reload: () => Promise<void>
 }
 
@@ -51,6 +56,7 @@ async function applySnapshotFromSupabase(snapshot: HmsStoreSnapshot | null, remo
   if (staffRepaired || staffEmailsFixed) {
     await saveHmsSnapshotToSupabase(exportHmsStoreSnapshot())
   }
+  clearStoreDirty()
   return true
 }
 
@@ -73,10 +79,12 @@ async function bootstrapFromSupabase(): Promise<string | null> {
 
 export function HmsStoreProvider({ children }: { children: ReactNode }) {
   const isSupabase = isSupabaseBackendEnabled()
-  const [isReady, setIsReady] = useState(!isSupabase)
+  const [isReady, setIsReady] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dataVersion, setDataVersion] = useState(0)
   const refreshInFlight = useRef(false)
+  const refreshDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const hasBootstrapped = useRef(false)
   const remoteUpdatedAt = useRef<string | null>(null)
 
   const bumpDataVersion = useCallback(() => {
@@ -102,19 +110,29 @@ export function HmsStoreProvider({ children }: { children: ReactNode }) {
     }
   }, [isSupabase, bumpDataVersion])
 
-  const load = useCallback(async () => {
-    if (!isSupabase) {
-      setIsReady(true)
-      return
-    }
+  const scheduleRefreshFromSupabase = useCallback(() => {
+    if (!isSupabase) return
+    if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current)
+    refreshDebounceRef.current = setTimeout(() => {
+      refreshDebounceRef.current = null
+      void refreshFromSupabase()
+    }, REFRESH_DEBOUNCE_MS)
+  }, [isSupabase, refreshFromSupabase])
+
+  const bootstrap = useCallback(async () => {
+    if (!isSupabase) return
 
     setError(null)
     try {
       remoteUpdatedAt.current = await bootstrapFromSupabase()
+      hasBootstrapped.current = true
       clearHmsLocalStorage()
 
       registerSupabaseSaveNotifier((savedAt) => {
         remoteUpdatedAt.current = savedAt
+        bumpDataVersion()
+      })
+      registerStoreChangeNotifier(() => {
         bumpDataVersion()
       })
       registerSupabasePersistence(async () => {
@@ -130,13 +148,21 @@ export function HmsStoreProvider({ children }: { children: ReactNode }) {
     }
   }, [isSupabase, bumpDataVersion])
 
-  useEffect(() => {
-    void load()
-  }, [load])
+  const reload = useCallback(async () => {
+    if (!isSupabase) return
+    if (hasBootstrapped.current) {
+      await refreshFromSupabase()
+      return
+    }
+    await bootstrap()
+  }, [isSupabase, bootstrap, refreshFromSupabase])
 
-  // Keep Admin, Reception, Doctor, Emergency, Nurse, Pharmacy, Lab dashboards in sync
   useEffect(() => {
-    if (!isSupabase || !isReady) return
+    void bootstrap()
+  }, [bootstrap])
+
+  useEffect(() => {
+    if (!isSupabase || !hasBootstrapped.current) return
 
     const interval = setInterval(() => {
       void refreshFromSupabase()
@@ -156,25 +182,86 @@ export function HmsStoreProvider({ children }: { children: ReactNode }) {
     return () => {
       clearInterval(interval)
       document.removeEventListener('visibilitychange', onVisible)
+      if (refreshDebounceRef.current) clearTimeout(refreshDebounceRef.current)
     }
-  }, [isSupabase, isReady, refreshFromSupabase])
+  }, [isSupabase, error, refreshFromSupabase])
 
-  if (!isReady) {
-    return (
-      <div className="d-flex flex-column align-items-center justify-content-center min-vh-100 gap-2">
-        <div className="spinner-border spinner-border-sm text-primary" role="status" />
-        <p className="text-muted mb-0 small">FSH Hospital — loading…</p>
-      </div>
-    )
-  }
+  useEffect(() => {
+    if (!isSupabase || error) return
+
+    const supabase = getSupabase()
+    const channel = supabase
+      .channel('hms-live-sync')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'hms_meta',
+          filter: `id=eq.${HMS_META_ROW_ID}`,
+        },
+        () => {
+          scheduleRefreshFromSupabase()
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'hms_lab_requests',
+        },
+        () => {
+          scheduleRefreshFromSupabase()
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'hms_surgery_requests',
+        },
+        () => {
+          scheduleRefreshFromSupabase()
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'hms_admission_requests',
+        },
+        () => {
+          scheduleRefreshFromSupabase()
+        },
+      )
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'hms_visits',
+        },
+        () => {
+          scheduleRefreshFromSupabase()
+        },
+      )
+      .subscribe()
+
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [isSupabase, error, scheduleRefreshFromSupabase])
 
   if (error && isSupabase) {
-    return <SupabaseSetupError error={error} onRetry={() => void load()} />
+    return <SupabaseSetupError error={error} onRetry={() => void bootstrap()} />
   }
 
   return (
     <HmsStoreContext.Provider
-      value={{ isReady, isSupabase, error, dataVersion, reload: load }}
+      value={{ isReady, isSupabase, error, dataVersion, reload }}
     >
       {children}
     </HmsStoreContext.Provider>

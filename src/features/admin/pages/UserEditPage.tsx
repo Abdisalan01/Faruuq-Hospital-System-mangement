@@ -1,29 +1,41 @@
-import { useState } from 'react'
-import { Button, Card, CardBody, Col, Form, Row } from 'react-bootstrap'
+import { useEffect, useState } from 'react'
+import { Button, Card, CardBody, Col, Form, InputGroup, Row } from 'react-bootstrap'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import PageMetaData from '@/components/PageTitle'
+import IconifyIcon from '@/components/wrappers/IconifyIcon'
+import { useHmsStoreContext } from '@/context/HmsStoreContext'
 import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
 import { getStaffById, persistStaffUsersNowAsync } from '@/shared/services/hmsStore'
 import { hashPassword, validatePasswordStrength } from '@/shared/services/passwordUtils'
 import { ROLE_LABELS, USER_ROLES, type UserRole } from '@/shared/types/roles'
 
+const MANAGED_ROLES = USER_ROLES.filter((r) => r !== 'emergency')
+
 const UserEditPage = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { dataVersion } = useHmsStoreContext()
   const user = id ? getStaffById(id) : undefined
 
-  const [fullName, setFullName] = useState(
-    user ? `${user.firstName} ${user.lastName === '—' ? '' : user.lastName}`.trim() : '',
-  )
-  const [role, setRole] = useState<UserRole>(user?.role ?? 'reception_cashier')
+  const [fullName, setFullName] = useState('')
+  const [role, setRole] = useState<UserRole>('reception_cashier')
   const [password, setPassword] = useState('')
-  const [isActive, setIsActive] = useState(user?.isActive ?? true)
+  const [showPassword, setShowPassword] = useState(true)
+  const [isActive, setIsActive] = useState(true)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
 
-  if (!user) {
+  useEffect(() => {
+    if (!user || user.role === 'emergency') return
+    setFullName(`${user.firstName} ${user.lastName === '—' ? '' : user.lastName}`.trim())
+    setRole(user.role)
+    setIsActive(user.isActive)
+    setPassword('')
+  }, [user, dataVersion])
+
+  if (!user || user.role === 'emergency') {
     return (
       <PermissionGuard permissions={['user_management']}>
         <PageMetaData title="User Not Found" />
@@ -34,13 +46,16 @@ const UserEditPage = () => {
   }
 
   const isBootstrapAdmin = user.id === 'staff-001'
-  const roleOptions = isBootstrapAdmin
-    ? USER_ROLES
-    : USER_ROLES.filter((r) => r !== 'admin')
+  const roleOptions = isBootstrapAdmin ? MANAGED_ROLES : MANAGED_ROLES.filter((r) => r !== 'admin')
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+
+    if (!fullName.trim()) {
+      setError('Full name is required.')
+      return
+    }
 
     if (password.trim()) {
       const passwordError = validatePasswordStrength(password)
@@ -60,11 +75,15 @@ const UserEditPage = () => {
       user.lastName = parts.length > 1 ? parts.slice(1).join(' ') : '—'
       if (!isBootstrapAdmin) user.role = role
       user.isActive = isActive
+      user.lastModifiedAt = new Date().toISOString()
 
       await persistStaffUsersNowAsync()
-      navigate(`/hms/administration/users/${user.id}`)
-    } catch {
-      setError('Failed to save user. Please try again.')
+      navigate('/hms/administration/users', {
+        state: { message: `User "${user.username}" updated successfully.` },
+      })
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : 'Unknown error'
+      setError(`Failed to save user: ${detail}`)
     } finally {
       setSaving(false)
     }
@@ -79,7 +98,7 @@ const UserEditPage = () => {
         breadcrumbs={[
           { label: 'Hospital Dashboard', href: '/hms/dashboard' },
           { label: 'User Management', href: '/hms/administration/users' },
-          { label: user.username, href: `/hms/administration/users/${user.id}` },
+          { label: user.username },
           { label: 'Edit' },
         ]}
       />
@@ -123,14 +142,26 @@ const UserEditPage = () => {
               <Col md={6}>
                 <Form.Group className="mb-3">
                   <Form.Label>Password</Form.Label>
-                  <Form.Control
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Leave blank to keep current (min 8, letter + number)"
-                    minLength={8}
-                    autoComplete="new-password"
-                  />
+                  <InputGroup>
+                    <Form.Control
+                      type={showPassword ? 'text' : 'password'}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="Enter new password or leave blank to keep current"
+                      autoComplete="new-password"
+                    />
+                    <Button
+                      variant="outline-secondary"
+                      type="button"
+                      onClick={() => setShowPassword((v) => !v)}
+                      aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    >
+                      <IconifyIcon icon={showPassword ? 'solar:eye-closed-broken' : 'solar:eye-broken'} />
+                    </Button>
+                  </InputGroup>
+                  <Form.Text className="text-muted">
+                    Min 8 characters with at least one letter and one number.
+                  </Form.Text>
                 </Form.Group>
               </Col>
               <Col md={12}>
@@ -147,7 +178,7 @@ const UserEditPage = () => {
               <Button type="submit" variant="success" disabled={saving}>
                 {saving ? 'Saving…' : 'Save Changes'}
               </Button>
-              <Link to={`/hms/administration/users/${user.id}`} className="btn btn-light">
+              <Link to="/hms/administration/users" className="btn btn-light">
                 Cancel
               </Link>
             </div>

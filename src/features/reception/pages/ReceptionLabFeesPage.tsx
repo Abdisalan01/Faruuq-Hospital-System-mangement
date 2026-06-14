@@ -28,7 +28,7 @@ import {
 } from '@/shared/services/hmsStore'
 import type { LabRequest, ReceptionReceipt } from '@/shared/types'
 import { discountAmountFromPercent } from '@/shared/utils/discountLimits'
-import { refreshVisitWorkflow } from '@/shared/utils/visitConsultation'
+import { isReceptionLabFeeVisible, refreshVisitWorkflow } from '@/shared/utils/visitConsultation'
 
 const PAGE_SIZE = 10
 
@@ -116,12 +116,23 @@ const ReceptionLabFeesPage = () => {
   const [printReceipt, setPrintReceipt] = useState<ReceptionReceipt | null>(null)
   const [showPrintModal, setShowPrintModal] = useState(false)
 
+  const labSyncKey = useMemo(
+    () =>
+      storeLabRequests
+        .map((r) => {
+          const visit = getVisitById(r.visitId)
+          return `${r.id}:${r.status}:${r.lastModifiedAt ?? r.cancelledAt ?? ''}:${visit?.status ?? ''}`
+        })
+        .join('|'),
+    [dataVersion, storeLabRequests.length],
+  )
+
   const allRequests = useMemo(
     () =>
       [...storeLabRequests]
-        .filter((r) => r.status !== 'Cancelled')
+        .filter(isReceptionLabFeeVisible)
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-    [dataVersion, storeLabRequests.length],
+    [labSyncKey],
   )
 
   const filtered = useMemo(() => {

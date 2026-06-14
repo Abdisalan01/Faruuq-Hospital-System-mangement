@@ -15,12 +15,12 @@ import {
   getPatientById,
   getStaffById,
   persistReleasePatientNowAsync,
-  visits,
 } from '@/shared/services/hmsStore'
 import {
   canDoctorReleasePatient,
   confirmDoctorPatientRelease,
   getDoctorQueuePatientStatus,
+  isDoctorQueuePatientActive,
 } from '@/shared/utils/visitConsultation'
 
 const PAGE_SIZE = 10
@@ -29,14 +29,14 @@ type PatientStatusFilter = 'all' | 'in_care' | 'inactive' | 'waiting'
 
 const STATUS_FILTERS: { key: PatientStatusFilter; label: string }[] = [
   { key: 'all', label: 'All' },
-  { key: 'in_care', label: 'Active (in care)' },
-  { key: 'inactive', label: 'Inactive (release)' },
-  { key: 'waiting', label: 'Waiting' },
+  { key: 'in_care', label: 'Active (waiting + in care)' },
+  { key: 'inactive', label: 'Inactive (released)' },
+  { key: 'waiting', label: 'Waiting only' },
 ]
 
 const DoctorAllPatientsPage = () => {
   const { user } = useAuthContext()
-  const { dataVersion, isReady, isSupabase, reload } = useHmsStoreContext()
+  const { dataVersion, isSupabase } = useHmsStoreContext()
   const doctorId = user?.id ?? getLoggedInStaffId()
 
   const [search, setSearch] = useState('')
@@ -46,13 +46,9 @@ const DoctorAllPatientsPage = () => {
   const [tick, setTick] = useState(0)
   const refresh = () => setTick((t) => t + 1)
 
-  useEffect(() => {
-    if (isSupabase && isReady) void reload()
-  }, [isSupabase, isReady, reload])
-
   const doctorQueue = useMemo(
     () => (doctorId ? getDoctorPatientQueue(doctorId) : []),
-    [doctorId, dataVersion, tick, visits.length],
+    [doctorId, dataVersion, tick],
   )
 
   const doctorName = useMemo(() => {
@@ -73,7 +69,9 @@ const DoctorAllPatientsPage = () => {
       }
 
       const careStatus = getDoctorQueuePatientStatus(visit, getPatientById(visit.patientId))
-      if (statusFilter === 'in_care') return careStatus === 'Active'
+      if (statusFilter === 'in_care') {
+        return isDoctorQueuePatientActive(visit, getPatientById(visit.patientId))
+      }
       if (statusFilter === 'inactive') return careStatus === 'Inactive'
       if (statusFilter === 'waiting') return careStatus === 'Waiting'
       return true
@@ -121,24 +119,12 @@ const DoctorAllPatientsPage = () => {
   const rangeStart = filtered.length === 0 ? 0 : (safePage - 1) * PAGE_SIZE + 1
   const rangeEnd = Math.min(safePage * PAGE_SIZE, filtered.length)
 
-  if (!isReady) {
-    return (
-      <PermissionGuard permissions={['view_assigned_patients']}>
-        <PageMetaData title="All Patients" />
-        <div className="d-flex flex-column align-items-center justify-content-center py-5 gap-2">
-          <div className="spinner-border spinner-border-sm text-primary" role="status" />
-          <p className="text-muted mb-0 small">Loading patient queue…</p>
-        </div>
-      </PermissionGuard>
-    )
-  }
-
   return (
     <PermissionGuard permissions={['view_assigned_patients']}>
       <PageMetaData title="All Patients" />
       <PageHeader
         title="All Patients"
-        subtitle={`Patients referred to ${doctorName} today`}
+        subtitle={`Today's patients and open visits assigned to ${doctorName}`}
         breadcrumbs={[
           { label: 'Doctor', href: '/hms/doctor/dashboard' },
           { label: 'All Patients' },

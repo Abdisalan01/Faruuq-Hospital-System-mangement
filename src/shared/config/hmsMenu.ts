@@ -35,10 +35,10 @@ export const HMS_MENU_ITEMS: HMSMenuItemType[] = [
     permissions: ['receive_payments'],
   },
   {
-    key: 'hms-reception-patient-discounts-menu',
-    icon: 'solar:tag-price-broken',
-    label: 'Patient Discounts',
-    url: '/hms/reception/patient-discounts',
+    key: 'hms-reception-obstetric',
+    icon: 'solar:heart-pulse-broken',
+    label: 'Obstetric / Delivery',
+    url: '/hms/reception/obstetric',
     permissions: ['receive_payments'],
   },
   {
@@ -63,13 +63,6 @@ export const HMS_MENU_ITEMS: HMSMenuItemType[] = [
     permissions: ['receive_payments'],
   },
   {
-    key: 'hms-reception-inpatient-medicine',
-    icon: 'solar:document-medicine-broken',
-    label: 'Inpatient Medicine',
-    url: '/hms/reception/inpatient-medicine',
-    permissions: ['receive_payments'],
-  },
-  {
     key: 'hms-visits',
     icon: 'solar:clipboard-list-broken',
     label: 'Visits',
@@ -91,7 +84,6 @@ export const HMS_MENU_ITEMS: HMSMenuItemType[] = [
       { key: 'hms-reception-billing', label: 'Billing', url: '/hms/reception/billing', parentKey: 'hms-reception', permissions: ['receive_payments'] },
       { key: 'hms-reception-receipts', label: 'Receipts', url: '/hms/reception/receipts', parentKey: 'hms-reception', permissions: ['print_receipts'] },
       { key: 'hms-reception-credit', label: 'Credit Accounts', url: '/hms/reception/credit-accounts', parentKey: 'hms-reception', permissions: ['manage_patient_credit'] },
-      { key: 'hms-reception-patient-discounts', label: 'Patient Discounts', url: '/hms/reception/patient-discounts', parentKey: 'hms-reception', permissions: ['receive_payments'] },
     ],
   },
   {
@@ -295,7 +287,6 @@ export const HMS_MENU_ITEMS: HMSMenuItemType[] = [
       { key: 'hms-accounting-expenses', label: 'Expenses', url: '/hms/accounting/expenses', parentKey: 'hms-accounting', permissions: ['accounting'] },
       { key: 'hms-accounting-receivables', label: 'Receivables', url: '/hms/accounting/receivables', parentKey: 'hms-accounting', permissions: ['accounting'] },
       { key: 'hms-accounting-revenue', label: 'Revenue Reports', url: '/hms/accounting/revenue', parentKey: 'hms-accounting', permissions: ['accounting'] },
-      { key: 'hms-accounting-financial', label: 'Financial Reports', url: '/hms/accounting/financial-reports', parentKey: 'hms-accounting', permissions: ['accounting'] },
     ],
   },
   {
@@ -358,7 +349,6 @@ export const HMS_MENU_ITEMS: HMSMenuItemType[] = [
     permissions: ['system_settings', 'user_management'],
     children: [
       { key: 'hms-admin-discount-mgmt', label: 'Discount Management', url: '/hms/administration/discounts', parentKey: 'hms-admin-discounts', permissions: ['system_settings', 'user_management'] },
-      { key: 'hms-admin-patient-discount', label: 'Patient Discounts', url: '/hms/administration/patient-discounts', parentKey: 'hms-admin-discounts', permissions: ['system_settings', 'user_management'] },
     ],
   },
   {
@@ -366,6 +356,13 @@ export const HMS_MENU_ITEMS: HMSMenuItemType[] = [
     icon: 'solar:wallet-money-broken',
     label: 'Patient Number Fee',
     url: '/hms/administration/patient-number-fee',
+    permissions: ['system_settings'],
+  },
+  {
+    key: 'hms-admin-obstetrician-fee',
+    icon: 'solar:heart-pulse-broken',
+    label: 'Obstetrician Fee',
+    url: '/hms/administration/obstetrician-fee',
     permissions: ['system_settings'],
   },
   {
@@ -404,17 +401,17 @@ export const HMS_MENU_ITEMS: HMSMenuItemType[] = [
     permissions: ['reports', 'user_management'],
   },
   {
-    key: 'hms-admin-financial-reports',
-    icon: 'solar:wallet-money-broken',
-    label: 'Financial Accounting',
-    url: '/hms/accounting/financial-reports',
-    permissions: ['accounting'],
-  },
-  {
     key: 'hms-admin-operational-reports',
     icon: 'solar:chart-2-broken',
-    label: 'Reports',
+    label: 'Operational Reports',
     url: '/hms/administration/operational-reports',
+    permissions: ['reports', 'user_management'],
+  },
+  {
+    key: 'hms-admin-financial-reports',
+    icon: 'solar:wallet-money-broken',
+    label: 'Financial Reports',
+    url: '/hms/administration/financial-reports',
     permissions: ['reports', 'user_management'],
   },
 ]
@@ -432,13 +429,11 @@ const RECEPTION_CASHIER_MENU_KEYS = new Set([
   'hms-reception-billing',
   'hms-reception-receipts',
   'hms-reception-credit',
-  'hms-reception-patient-discounts',
   'hms-reception-lab-fees',
-  'hms-reception-patient-discounts-menu',
+  'hms-reception-obstetric',
   'hms-reception-inpatient-request',
   'hms-reception-all-inpatients',
   'hms-reception-surgery',
-  'hms-reception-inpatient-medicine',
 ])
 
 /** Laboratory staff sidebar */
@@ -471,15 +466,15 @@ const ADMIN_MENU_KEYS = new Set([
   'hms-admin-users-create',
   'hms-admin-discounts',
   'hms-admin-discount-mgmt',
-  'hms-admin-patient-discount',
   'hms-admin-patient-number-fee',
+  'hms-admin-obstetrician-fee',
   'hms-admin-lab-tests',
   'hms-admin-medicines',
   'hms-admin-surgeries',
   'hms-admin-rooms-beds',
   'hms-admin-patient-reports',
-  'hms-admin-financial-reports',
   'hms-admin-operational-reports',
+  'hms-admin-financial-reports',
 ])
 
 /** Nurse sidebar — nursing dashboard + all inpatients only */

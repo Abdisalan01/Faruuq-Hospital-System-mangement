@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Alert, Button, Card, CardBody, Modal, Table } from 'react-bootstrap'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 
 import PageMetaData from '@/components/PageTitle'
 import IconifyIcon from '@/components/wrappers/IconifyIcon'
@@ -8,21 +8,37 @@ import { useHmsStoreContext } from '@/context/HmsStoreContext'
 import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
 import StatusBadge from '@/shared/components/StatusBadge'
+import TablePagination from '@/shared/components/TablePagination'
+import { useTablePagination } from '@/shared/hooks/useTablePagination'
 import { persistStaffUsersNowAsync, removeStaffUser, staffUsers } from '@/shared/services/hmsStore'
 import { ROLE_LABELS } from '@/shared/types/roles'
 import type { StaffUser } from '@/shared/types'
 
 const UsersListPage = () => {
   const { dataVersion } = useHmsStoreContext()
-  const [, setTick] = useState(0)
-  const refresh = () => setTick((value) => value + 1)
+  const location = useLocation()
 
-  const [message, setMessage] = useState('')
+  const [message, setMessage] = useState(
+    (location.state as { message?: string } | null)?.message ?? '',
+  )
   const [error, setError] = useState('')
   const [deleting, setDeleting] = useState(false)
   const [userToDelete, setUserToDelete] = useState<StaffUser | null>(null)
 
-  void dataVersion
+  const visibleUsers = useMemo(
+    () => staffUsers.filter((user) => user.role !== 'emergency'),
+    [dataVersion, staffUsers.length],
+  )
+
+  const {
+    pageItems,
+    setPage,
+    safePage,
+    totalPages,
+    rangeStart,
+    rangeEnd,
+    totalItems,
+  } = useTablePagination(visibleUsers, 10, [visibleUsers.length, dataVersion])
 
   const handleDelete = async () => {
     if (!userToDelete) return
@@ -38,9 +54,9 @@ const UsersListPage = () => {
       await persistStaffUsersNowAsync()
       setMessage(`User "${userToDelete.username}" deleted.`)
       setUserToDelete(null)
-      refresh()
-    } catch {
-      setError('User removed locally but failed to save to database. Please try again.')
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : 'Unknown error'
+      setError(`Failed to save deletion to database: ${detail}`)
     } finally {
       setDeleting(false)
     }
@@ -86,14 +102,14 @@ const UsersListPage = () => {
                 </tr>
               </thead>
               <tbody>
-                {staffUsers.length === 0 ? (
+                {visibleUsers.length === 0 ? (
                   <tr>
                     <td colSpan={6} className="text-center text-muted py-4">
                       No users found. Click Add User to create staff accounts.
                     </td>
                   </tr>
                 ) : (
-                  staffUsers.map((user) => (
+                  pageItems.map((user) => (
                     <tr key={user.id}>
                       <td className="fw-medium">{user.username}</td>
                       <td>
@@ -106,12 +122,6 @@ const UsersListPage = () => {
                       </td>
                       <td>
                         <div className="d-flex gap-1">
-                          <Link
-                            to={`/hms/administration/users/${user.id}`}
-                            className="btn btn-sm btn-soft-primary"
-                          >
-                            <IconifyIcon icon="solar:eye-broken" />
-                          </Link>
                           <Link
                             to={`/hms/administration/users/${user.id}/edit`}
                             className="btn btn-sm btn-soft-success"
@@ -136,6 +146,15 @@ const UsersListPage = () => {
               </tbody>
             </Table>
           </div>
+          <TablePagination
+            className="pt-3 border-top mt-3"
+            totalItems={totalItems}
+            rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
+            safePage={safePage}
+            totalPages={totalPages}
+            onPageChange={setPage}
+          />
         </CardBody>
       </Card>
 

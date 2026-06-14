@@ -1,9 +1,10 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Button, Card, CardBody, Col, Row, Table } from 'react-bootstrap'
 import { Link, useParams } from 'react-router-dom'
 
 import PageMetaData from '@/components/PageTitle'
 import IconifyIcon from '@/components/wrappers/IconifyIcon'
+import { useHmsStoreContext } from '@/context/HmsStoreContext'
 import A4PrintModal from '@/features/doctor/components/a4/A4PrintModal'
 import LabResultReportA4 from '@/features/laboratory/components/LabResultReportA4'
 import { buildLabResultReportData } from '@/features/laboratory/utils/labResultReport'
@@ -15,7 +16,12 @@ import type { LabResultReportData } from '@/features/laboratory/components/LabRe
 
 const LabRequestDetailPage = () => {
   const { id } = useParams<{ id: string }>()
-  const request = id ? labRequests.find((l) => l.id === id) : undefined
+  const { dataVersion } = useHmsStoreContext()
+
+  const request = useMemo(
+    () => (id ? labRequests.find((l) => l.id === id) : undefined),
+    [id, dataVersion, labRequests.length],
+  )
   const patient = request ? getPatientById(request.patientId) : undefined
   const doctor = request ? getStaffById(request.doctorId) : undefined
   const visit = request ? getVisitById(request.visitId) : undefined

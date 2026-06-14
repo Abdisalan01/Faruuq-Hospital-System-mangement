@@ -1,7 +1,5 @@
-import { lazy, type ReactNode } from 'react'
+import { lazy } from 'react'
 import { Navigate, useParams, type RouteProps } from 'react-router-dom'
-
-import { RoleGuardRoute } from '@/shared/components/PermissionGuard'
 
 function RedirectEmergencyConsultation() {
   const { id } = useParams()
@@ -38,10 +36,7 @@ const ReceptionAllInpatients = lazy(
   () => import('@/features/reception/pages/ReceptionAllInpatientsPage'),
 )
 const ReceptionSurgeryPage = lazy(() => import('@/features/reception/pages/ReceptionSurgeryPage'))
-const ReceptionInpatientMedicinePage = lazy(
-  () => import('@/features/reception/pages/ReceptionInpatientMedicinePage'),
-)
-const ReceptionPatientDiscounts = lazy(() => import('@/features/reception/pages/ReceptionPatientDiscountsPage'))
+const ReceptionObstetricPage = lazy(() => import('@/features/reception/pages/ReceptionObstetricPage'))
 const ReceptionActivatePatient = lazy(
   () => import('@/features/reception/pages/ReceptionActivatePatientPage'),
 )
@@ -101,20 +96,15 @@ const MedicineCatalog = lazy(() => import('@/features/admin/pages/AdminCatalogPa
 const SurgeryCatalog = lazy(() => import('@/features/admin/pages/AdminCatalogPages').then((m) => ({ default: m.SurgeryCatalogPage })))
 const RoomBedManagement = lazy(() => import('@/features/admin/pages/AdminCatalogPages').then((m) => ({ default: m.RoomBedManagementPage })))
 const DiscountsAdmin = lazy(() => import('@/features/admin/pages/AdminDiscountManagementPage'))
-const AdminPatientDiscounts = lazy(() => import('@/features/admin/pages/AdminPatientDiscountsPage'))
 const AdminPatientNumberFee = lazy(() => import('@/features/admin/pages/AdminPatientNumberFeePage'))
+const AdminObstetricianFee = lazy(() => import('@/features/admin/pages/AdminObstetricianFeePage'))
 const AdminReports = lazy(() => import('@/features/admin/pages/AdminReportsPage'))
 const AdminOperationalReports = lazy(() => import('@/features/admin/pages/AdminOperationalReportsPage'))
-const FinancialReports = lazy(() => import('@/features/accounting/pages/FinancialReportsPage'))
-
+const AdminFinancialReports = lazy(() => import('@/features/admin/pages/AdminFinancialReportsPage'))
 // Settings
 const HospitalInfoPage = lazy(() => import('@/features/settings/pages/SettingsPages').then((m) => ({ default: m.HospitalInfoPage })))
 const ServicesPricingPage = lazy(() => import('@/features/settings/pages/SettingsPages').then((m) => ({ default: m.ServicesPricingPage })))
 const GeneralSettingsPage = lazy(() => import('@/features/settings/pages/SettingsPages').then((m) => ({ default: m.GeneralSettingsPage })))
-
-const withAccounting = (element: ReactNode) => (
-  <RoleGuardRoute permissions={['accounting']}>{element}</RoleGuardRoute>
-)
 
 export const hmsRoutes: HMSRoutesProps[] = [
   { path: '/hms/dashboard', name: 'Dashboard', element: <HMSDashboard /> },
@@ -137,12 +127,7 @@ export const hmsRoutes: HMSRoutesProps[] = [
   { path: '/hms/reception/inpatient-request', name: 'In Patient Request', element: <ReceptionInpatientRequest /> },
   { path: '/hms/reception/all-inpatients', name: 'All Inpatients', element: <ReceptionAllInpatients /> },
   { path: '/hms/reception/surgery', name: 'Surgery', element: <ReceptionSurgeryPage /> },
-  {
-    path: '/hms/reception/inpatient-medicine',
-    name: 'Inpatient Medicine',
-    element: <ReceptionInpatientMedicinePage />,
-  },
-  { path: '/hms/reception/patient-discounts', name: 'Patient Discounts', element: <ReceptionPatientDiscounts /> },
+  { path: '/hms/reception/obstetric', name: 'Obstetric Registration', element: <ReceptionObstetricPage /> },
   { path: '/hms/reception/activate-patient', name: 'Activate Patient', element: <ReceptionActivatePatient /> },
 
   // Doctors
@@ -186,9 +171,6 @@ export const hmsRoutes: HMSRoutesProps[] = [
   { path: '/hms/inpatient/all', name: 'All Inpatients', element: <NurseAllInpatients /> },
   { path: '/hms/inpatient/supply-request', name: 'Supplies Request', element: <NurseSupplyRequest /> },
 
-  // Accounting
-  { path: '/hms/accounting/financial-reports', name: 'Financial Reports', element: withAccounting(<FinancialReports />) },
-
   // Administration
   { path: '/hms/administration/users', name: 'Users', element: <UsersList /> },
   { path: '/hms/administration/users/create', name: 'Create User', element: <UserCreate /> },
@@ -205,10 +187,11 @@ export const hmsRoutes: HMSRoutesProps[] = [
   { path: '/hms/administration/surgeries', name: 'Surgery Catalog', element: <SurgeryCatalog /> },
   { path: '/hms/administration/rooms-beds', name: 'Rooms & Beds', element: <RoomBedManagement /> },
   { path: '/hms/administration/discounts', name: 'Discounts', element: <DiscountsAdmin /> },
-  { path: '/hms/administration/patient-discounts', name: 'Patient Discounts', element: <AdminPatientDiscounts /> },
   { path: '/hms/administration/patient-number-fee', name: 'Patient Number Fee', element: <AdminPatientNumberFee /> },
+  { path: '/hms/administration/obstetrician-fee', name: 'Obstetrician Fee', element: <AdminObstetricianFee /> },
   { path: '/hms/administration/patient-reports', name: 'All Patient Reports', element: <AdminReports /> },
   { path: '/hms/administration/operational-reports', name: 'Operational Reports', element: <AdminOperationalReports /> },
+  { path: '/hms/administration/financial-reports', name: 'Financial Reports', element: <AdminFinancialReports /> },
 
   // Settings
   { path: '/hms/settings/hospital', name: 'Hospital Information', element: <HospitalInfoPage /> },

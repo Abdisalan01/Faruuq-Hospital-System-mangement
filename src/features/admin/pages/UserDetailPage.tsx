@@ -13,7 +13,7 @@ const UserDetailPage = () => {
   const { id } = useParams<{ id: string }>()
   const user = id ? getStaffById(id) : undefined
 
-  if (!user) {
+  if (!user || user.role === 'emergency') {
     return (
       <PermissionGuard permissions={['user_management']}>
         <PageMetaData title="User Not Found" />

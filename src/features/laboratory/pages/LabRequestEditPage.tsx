@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Alert, Button, Card, CardBody, Col, Form, Row } from 'react-bootstrap'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
@@ -23,16 +23,28 @@ import type { LabResultReportData } from '@/features/laboratory/components/LabRe
 const LabRequestEditPage = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
-  const { isSupabase } = useHmsStoreContext()
-  const request = id ? labRequests.find((l) => l.id === id) : undefined
+  const { isSupabase, dataVersion } = useHmsStoreContext()
+
+  const request = useMemo(
+    () => (id ? labRequests.find((l) => l.id === id) : undefined),
+    [id, dataVersion, labRequests.length],
+  )
   const patient = request ? getPatientById(request.patientId) : undefined
 
-  const [tests, setTests] = useState<LabTestItem[]>(request ? request.tests.map((t) => ({ ...t })) : [])
+  const [tests, setTests] = useState<LabTestItem[]>([])
+  const [testsInitialized, setTestsInitialized] = useState(false)
   const [message, setMessage] = useState<{ type: 'success' | 'danger'; text: string } | null>(null)
   const [printData, setPrintData] = useState<LabResultReportData | null>(null)
   const [showPrintModal, setShowPrintModal] = useState(false)
   const [canPrint, setCanPrint] = useState(false)
   const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    if (request && !testsInitialized) {
+      setTests(request.tests.map((t) => ({ ...t })))
+      setTestsInitialized(true)
+    }
+  }, [request, testsInitialized])
 
   const updateTest = (index: number, field: keyof LabTestItem, value: string) => {
     setTests((prev) => prev.map((t, i) => (i === index ? { ...t, [field]: value } : t)))

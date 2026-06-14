@@ -9,13 +9,15 @@ import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
 import StatusBadge from '@/shared/components/StatusBadge'
 import {
+  deleteLabTestCatalogEntry,
   labTestCatalog,
   persistLabCatalogNowAsync,
   peekNextLabTestCode,
   saveLabTestCatalogEntry,
   systemSettings,
 } from '@/shared/services/hmsStore'
-import type { LabSampleType, LabTestCatalog, LabTestCategory } from '@/shared/types'
+import type { LabTestCatalog } from '@/shared/types'
+import { DEFAULT_LAB_TEST_CATEGORIES } from '@/shared/types'
 import type { Permission } from '@/shared/types/roles'
 import {
   downloadLabTestCatalogTemplate,
@@ -25,11 +27,7 @@ import {
 
 const PAGE_SIZE = 10
 
-const CATEGORIES: LabTestCategory[] = ['Laboratory', 'Radiology', 'Imaging']
-const SAMPLE_TYPES: LabSampleType[] = ['Blood', 'Urine', 'Stool', 'Other', 'N/A']
-
-type CategoryFilter = 'all' | LabTestCategory
-type SampleFilter = 'all' | LabSampleType
+type CategoryFilter = 'all' | string
 
 export type LabTestCatalogViewProps = {
   breadcrumbs: { label: string; href?: string }[]
@@ -39,16 +37,20 @@ export type LabTestCatalogViewProps = {
   subtitle?: string
 }
 
-const emptyForm = () => ({
+const emptyForm = (): {
+  testId: string
+  testName: string
+  category: string
+  price: number
+  unitReference: string
+  isActive: boolean
+} => ({
   testId: '',
   testName: '',
-  category: 'Laboratory' as LabTestCategory,
+  category: DEFAULT_LAB_TEST_CATEGORIES[0],
   price: 0,
+  unitReference: '',
   isActive: true,
-  description: '',
-  normalRange: '',
-  unit: '',
-  sampleType: 'Blood' as LabSampleType,
 })
 
 const LabTestCatalogView = ({
@@ -56,20 +58,20 @@ const LabTestCatalogView = ({
   permissions,
   readOnly = false,
   title = 'Lab Tests Catalog',
-  subtitle = 'Manage test ID, category, pricing, and clinical details',
+  subtitle = 'Manage Lab ID, test name, category, price, and unit reference',
 }: LabTestCatalogViewProps) => {
   const { dataVersion, isSupabase } = useHmsStoreContext()
-  const [, setRefresh] = useState(0)
-  const refresh = () => setRefresh((t) => t + 1)
 
   const [search, setSearch] = useState('')
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all')
-  const [sampleFilter, setSampleFilter] = useState<SampleFilter>('all')
   const [page, setPage] = useState(1)
   const [showModal, setShowModal] = useState(false)
   const [showImportModal, setShowImportModal] = useState(false)
+  const [showDeleteModal, setShowDeleteModal] = useState(false)
   const [editId, setEditId] = useState<string | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<LabTestCatalog | null>(null)
   const [pageMessage, setPageMessage] = useState('')
+  const [pageError, setPageError] = useState('')
   const [formError, setFormError] = useState('')
   const [saving, setSaving] = useState(false)
   const [importFile, setImportFile] = useState<File | null>(null)
@@ -79,25 +81,36 @@ const LabTestCatalogView = ({
   )
 
   const [form, setForm] = useState(emptyForm())
+  const [showNewCategory, setShowNewCategory] = useState(false)
+  const [newCategory, setNewCategory] = useState('')
+
+  const categoryOptions = useMemo(() => {
+    const fromCatalog = labTestCatalog.map((t) => t.category)
+    return [...new Set([...DEFAULT_LAB_TEST_CATEGORIES, ...fromCatalog])].sort((a, b) =>
+      a.localeCompare(b),
+    )
+  }, [labTestCatalog.length, dataVersion])
+
+  const filterCategories = useMemo(
+    () => ['all', ...categoryOptions] as CategoryFilter[],
+    [categoryOptions],
+  )
 
   const nextTestCode = useMemo(
     () => peekNextLabTestCode(),
-    [labTestCatalog.length, systemSettings.labTestCodeNextNumber],
+    [labTestCatalog.length, systemSettings.labTestCodeNextNumber, dataVersion],
   )
 
   const items = useMemo(() => {
     const q = search.toLowerCase().trim()
     return labTestCatalog
       .filter((t) => categoryFilter === 'all' || t.category === categoryFilter)
-      .filter((t) => sampleFilter === 'all' || t.sampleType === sampleFilter)
       .filter((t) => {
         if (!q) return true
-        return `${t.testId} ${t.testName} ${t.category} ${t.sampleType ?? ''} ${t.description ?? ''}`
-          .toLowerCase()
-          .includes(q)
+        return `${t.testId} ${t.testName} ${t.category} ${t.unitReference ?? ''}`.toLowerCase().includes(q)
       })
       .sort((a, b) => a.category.localeCompare(b.category) || a.testName.localeCompare(b.testName))
-  }, [search, categoryFilter, sampleFilter, labTestCatalog.length, dataVersion])
+  }, [search, categoryFilter, dataVersion, labTestCatalog.length])
 
   const totalPages = Math.max(1, Math.ceil(items.length / PAGE_SIZE))
   const safePage = Math.min(page, totalPages)
@@ -109,11 +122,13 @@ const LabTestCatalogView = ({
 
   useEffect(() => {
     setPage(1)
-  }, [search, categoryFilter, sampleFilter])
+  }, [search, categoryFilter])
 
   const openCreate = () => {
     setEditId(null)
     setForm({ ...emptyForm(), testId: peekNextLabTestCode() })
+    setShowNewCategory(false)
+    setNewCategory('')
     setFormError('')
     setShowModal(true)
   }
@@ -125,20 +140,24 @@ const LabTestCatalogView = ({
       testName: item.testName,
       category: item.category,
       price: item.price,
+      unitReference: item.unitReference ?? item.normalRange ?? item.unit ?? '',
       isActive: item.isActive,
-      description: item.description ?? '',
-      normalRange: item.normalRange ?? '',
-      unit: item.unit ?? '',
-      sampleType: item.sampleType ?? (item.category === 'Laboratory' ? 'Blood' : 'N/A'),
     })
+    setShowNewCategory(false)
+    setNewCategory('')
     setFormError('')
     setShowModal(true)
   }
 
+  const openDelete = (item: LabTestCatalog) => {
+    setDeleteTarget(item)
+    setShowDeleteModal(true)
+  }
+
   const persistCatalog = async (successMessage: string) => {
+    setPageError('')
     if (!isSupabase) {
       setPageMessage(`${successMessage} (database mode is off — enable VITE_USE_SUPABASE in .env)`)
-      refresh()
       return
     }
 
@@ -146,11 +165,9 @@ const LabTestCatalogView = ({
     try {
       await persistLabCatalogNowAsync()
       setPageMessage(`${successMessage} Saved to database.`)
-      refresh()
     } catch (err) {
       const detail = err instanceof Error ? err.message : 'Unknown error'
-      setPageMessage(`Database save failed: ${detail}`)
-      refresh()
+      setPageError(`Database save failed: ${detail}`)
     } finally {
       setSaving(false)
     }
@@ -162,21 +179,35 @@ const LabTestCatalogView = ({
     setShowImportModal(true)
   }
 
+  const resolveCategory = () => {
+    if (showNewCategory) return newCategory.trim()
+    return form.category.trim()
+  }
+
   const handleSave = async () => {
+    const finalCategory = resolveCategory()
     if (!form.testName.trim()) {
       setFormError('Test name is required')
       return
     }
+    if (!finalCategory) {
+      setFormError('Category is required')
+      return
+    }
     if (form.price < 0 || Number.isNaN(form.price)) {
-      setFormError('Price is required')
+      setFormError('Price must be a valid non-negative number')
       return
     }
 
     try {
       saveLabTestCatalogEntry({
         id: editId ?? undefined,
-        ...form,
-        sampleType: form.category === 'Laboratory' ? form.sampleType : 'N/A',
+        testId: form.testId,
+        testName: form.testName,
+        category: finalCategory,
+        price: form.price,
+        unitReference: form.unitReference,
+        isActive: form.isActive,
       })
       setShowModal(false)
       await persistCatalog(editId ? 'Test updated.' : 'Test added.')
@@ -185,8 +216,28 @@ const LabTestCatalogView = ({
     }
   }
 
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    try {
+      deleteLabTestCatalogEntry(deleteTarget.id)
+      setShowDeleteModal(false)
+      setDeleteTarget(null)
+      await persistCatalog(`Test "${deleteTarget.testName}" deleted.`)
+    } catch (err) {
+      setPageError(err instanceof Error ? err.message : 'Could not delete test')
+    }
+  }
+
   const toggleActive = async (item: LabTestCatalog) => {
-    saveLabTestCatalogEntry({ ...item, isActive: !item.isActive })
+    saveLabTestCatalogEntry({
+      id: item.id,
+      testId: item.testId,
+      testName: item.testName,
+      category: item.category,
+      price: item.price,
+      unitReference: item.unitReference,
+      isActive: !item.isActive,
+    })
     await persistCatalog(item.isActive ? 'Test deactivated.' : 'Test activated.')
   }
 
@@ -222,7 +273,6 @@ const LabTestCatalogView = ({
           type: result.errors.length > 0 ? 'warning' : 'success',
           text: `Import complete: ${parts.join(', ')}.${isSupabase ? ' Saved to database.' : ''}`,
         })
-        refresh()
         if (result.errors.length === 0) {
           setTimeout(() => setShowImportModal(false), 1800)
         }
@@ -235,16 +285,7 @@ const LabTestCatalogView = ({
   }
 
   const updateForm = <K extends keyof typeof form>(key: K, value: (typeof form)[K]) => {
-    setForm((prev) => {
-      const next = { ...prev, [key]: value }
-      if (key === 'category' && value !== 'Laboratory') {
-        next.sampleType = 'N/A'
-      }
-      if (key === 'category' && value === 'Laboratory' && prev.sampleType === 'N/A') {
-        next.sampleType = 'Blood'
-      }
-      return next
-    })
+    setForm((prev) => ({ ...prev, [key]: value }))
   }
 
   return (
@@ -271,44 +312,37 @@ const LabTestCatalogView = ({
           {pageMessage}
         </Alert>
       )}
+      {pageError && (
+        <Alert variant="danger" dismissible onClose={() => setPageError('')}>
+          {pageError}
+        </Alert>
+      )}
 
       <Card>
         <CardBody>
           <Row className="g-3 mb-3">
-            <Col md={5}>
+            <Col md={8}>
               <InputGroup>
                 <InputGroup.Text>
                   <IconifyIcon icon="solar:magnifer-broken" />
                 </InputGroup.Text>
                 <Form.Control
-                  placeholder="Search by ID, name, category..."
+                  placeholder="Search by Lab ID, name, category, unit reference..."
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
               </InputGroup>
             </Col>
             <Col md={3}>
-              <Form.Select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value as CategoryFilter)}>
+              <Form.Select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
                 <option value="all">All categories</option>
-                {CATEGORIES.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </Form.Select>
-            </Col>
-            <Col md={3}>
-              <Form.Select
-                value={sampleFilter}
-                onChange={(e) => setSampleFilter(e.target.value as SampleFilter)}
-                disabled={categoryFilter !== 'all' && categoryFilter !== 'Laboratory'}
-              >
-                <option value="all">All sample types</option>
-                {SAMPLE_TYPES.map((s) => (
-                  <option key={s} value={s}>
-                    {s}
-                  </option>
-                ))}
+                {filterCategories
+                  .filter((c) => c !== 'all')
+                  .map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
               </Form.Select>
             </Col>
             <Col md={1} className="d-flex align-items-center justify-content-end text-muted small">
@@ -320,12 +354,11 @@ const LabTestCatalogView = ({
             <Table hover className="mb-0 align-middle">
               <thead className="bg-light bg-opacity-50">
                 <tr>
-                  <th>Test ID</th>
+                  <th>Lab ID</th>
                   <th>Test Name</th>
                   <th>Category</th>
-                  <th>Sample</th>
                   <th>Price</th>
-                  <th>Normal Range</th>
+                  <th>Unit Reference</th>
                   <th>Status</th>
                   {!readOnly && <th />}
                 </tr>
@@ -333,7 +366,7 @@ const LabTestCatalogView = ({
               <tbody>
                 {pageItems.length === 0 ? (
                   <tr>
-                    <td colSpan={readOnly ? 7 : 8} className="text-center text-muted py-4">
+                    <td colSpan={readOnly ? 6 : 7} className="text-center text-muted py-4">
                       No tests found
                     </td>
                   </tr>
@@ -341,21 +374,17 @@ const LabTestCatalogView = ({
                   pageItems.map((t) => (
                     <tr key={t.id} className={!t.isActive ? 'text-muted' : undefined}>
                       <td className="fw-medium">{t.testId}</td>
-                      <td>
-                        <div>{t.testName}</div>
-                        {t.description && <div className="small text-muted">{t.description}</div>}
-                      </td>
+                      <td>{t.testName}</td>
                       <td>
                         <Badge bg="light" text="dark">
                           {t.category}
                         </Badge>
                       </td>
-                      <td>{t.sampleType ?? '—'}</td>
                       <td>
                         {currency}
                         {t.price.toLocaleString()}
                       </td>
-                      <td className="small">{t.normalRange ?? '—'}</td>
+                      <td className="small">{t.unitReference ?? '—'}</td>
                       <td>
                         <StatusBadge status={t.isActive ? 'Active' : 'Inactive'} />
                       </td>
@@ -364,8 +393,11 @@ const LabTestCatalogView = ({
                           <Button size="sm" variant="light" className="me-1" onClick={() => openEdit(t)}>
                             Edit
                           </Button>
-                          <Button size="sm" variant="outline-secondary" onClick={() => toggleActive(t)}>
+                          <Button size="sm" variant="outline-secondary" className="me-1" onClick={() => toggleActive(t)}>
                             {t.isActive ? 'Deactivate' : 'Activate'}
+                          </Button>
+                          <Button size="sm" variant="outline-danger" onClick={() => openDelete(t)}>
+                            Delete
                           </Button>
                         </td>
                       )}
@@ -409,7 +441,7 @@ const LabTestCatalogView = ({
             <Row>
               <Col md={6}>
                 <Form.Group className="mb-3">
-                  <Form.Label>Test ID *</Form.Label>
+                  <Form.Label>Lab ID *</Form.Label>
                   <Form.Control
                     value={form.testId}
                     onChange={(e) => updateForm('testId', e.target.value)}
@@ -421,7 +453,7 @@ const LabTestCatalogView = ({
               </Col>
               <Col md={6}>
                 <Form.Group className="mb-3">
-                  <Form.Label>Status *</Form.Label>
+                  <Form.Label>Status</Form.Label>
                   <Form.Select
                     value={form.isActive ? 'active' : 'inactive'}
                     onChange={(e) => updateForm('isActive', e.target.value === 'active')}
@@ -439,17 +471,41 @@ const LabTestCatalogView = ({
             <Row>
               <Col md={6}>
                 <Form.Group className="mb-3">
-                  <Form.Label>Category / Type *</Form.Label>
-                  <Form.Select
-                    value={form.category}
-                    onChange={(e) => updateForm('category', e.target.value as LabTestCategory)}
-                  >
-                    {CATEGORIES.map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </Form.Select>
+                  <Form.Label>Category *</Form.Label>
+                  {!showNewCategory ? (
+                    <>
+                      <Form.Select
+                        value={form.category}
+                        onChange={(e) => updateForm('category', e.target.value)}
+                      >
+                        <option value="">Select category...</option>
+                        {categoryOptions.map((c) => (
+                          <option key={c} value={c}>
+                            {c}
+                          </option>
+                        ))}
+                      </Form.Select>
+                      <Button
+                        variant="link"
+                        size="sm"
+                        className="px-0 mt-1"
+                        onClick={() => setShowNewCategory(true)}
+                      >
+                        + Add category name
+                      </Button>
+                    </>
+                  ) : (
+                    <InputGroup>
+                      <Form.Control
+                        value={newCategory}
+                        onChange={(e) => setNewCategory(e.target.value)}
+                        placeholder="New category name"
+                      />
+                      <Button variant="outline-secondary" onClick={() => setShowNewCategory(false)}>
+                        Cancel
+                      </Button>
+                    </InputGroup>
+                  )}
                 </Form.Group>
               </Col>
               <Col md={6}>
@@ -465,55 +521,44 @@ const LabTestCatalogView = ({
                 </Form.Group>
               </Col>
             </Row>
-            {form.category === 'Laboratory' && (
-              <Form.Group className="mb-3">
-                <Form.Label>Sample Type</Form.Label>
-                <Form.Select
-                  value={form.sampleType}
-                  onChange={(e) => updateForm('sampleType', e.target.value as LabSampleType)}
-                >
-                  {(['Blood', 'Urine', 'Stool', 'Other'] as LabSampleType[]).map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </Form.Select>
-              </Form.Group>
-            )}
             <Form.Group className="mb-3">
-              <Form.Label>Description</Form.Label>
+              <Form.Label>Unit Reference</Form.Label>
               <Form.Control
-                as="textarea"
-                rows={2}
-                value={form.description}
-                onChange={(e) => updateForm('description', e.target.value)}
+                value={form.unitReference}
+                onChange={(e) => updateForm('unitReference', e.target.value)}
+                placeholder="e.g. 4.5-11.0 x10^9/L"
               />
             </Form.Group>
-            <Row>
-              <Col md={6}>
-                <Form.Group className="mb-3">
-                  <Form.Label>Normal Range</Form.Label>
-                  <Form.Control value={form.normalRange} onChange={(e) => updateForm('normalRange', e.target.value)} />
-                </Form.Group>
-              </Col>
-              <Col md={6}>
-                <Form.Group className="mb-3">
-                  <Form.Label>Unit</Form.Label>
-                  <Form.Control value={form.unit} onChange={(e) => updateForm('unit', e.target.value)} />
-                </Form.Group>
-              </Col>
-            </Row>
           </Modal.Body>
           <Modal.Footer>
             <Button variant="light" onClick={() => setShowModal(false)}>
               Cancel
             </Button>
-            <Button
-              variant="success"
-              onClick={handleSave}
-              disabled={!form.testName.trim() || saving}
-            >
+            <Button variant="success" onClick={() => void handleSave()} disabled={!form.testName.trim() || saving}>
               {saving ? 'Saving...' : 'Save'}
+            </Button>
+          </Modal.Footer>
+        </Modal>
+      )}
+
+      {!readOnly && (
+        <Modal show={showDeleteModal} onHide={() => setShowDeleteModal(false)} centered>
+          <Modal.Header closeButton>
+            <Modal.Title>Delete lab test</Modal.Title>
+          </Modal.Header>
+          <Modal.Body>
+            {deleteTarget && (
+              <p className="mb-0">
+                Delete <strong>{deleteTarget.testName}</strong> ({deleteTarget.testId})? This cannot be undone.
+              </p>
+            )}
+          </Modal.Body>
+          <Modal.Footer>
+            <Button variant="light" onClick={() => setShowDeleteModal(false)}>
+              Cancel
+            </Button>
+            <Button variant="danger" onClick={() => void handleDelete()} disabled={saving}>
+              {saving ? 'Deleting...' : 'Delete'}
             </Button>
           </Modal.Footer>
         </Modal>
@@ -532,8 +577,8 @@ const LabTestCatalogView = ({
             )}
 
             <p className="text-muted">
-              Upload Excel to add many tests at once. Use the same <strong>Test ID</strong> to update an existing test.
-              Leave Test ID blank to auto-generate (e.g. {nextTestCode}).
+              Upload Excel to add many tests at once. Use the same <strong>Lab ID</strong> to update an existing test.
+              Leave Lab ID blank to auto-generate (e.g. {nextTestCode}).
             </p>
 
             <div className="border rounded p-3 bg-light bg-opacity-50 mb-3">
@@ -564,7 +609,7 @@ const LabTestCatalogView = ({
             <Button variant="light" onClick={() => setShowImportModal(false)}>
               Cancel
             </Button>
-            <Button variant="primary" onClick={handleImport} disabled={!importFile || importing}>
+            <Button variant="primary" onClick={() => void handleImport()} disabled={!importFile || importing}>
               {importing ? 'Importing...' : 'Import data'}
             </Button>
           </Modal.Footer>

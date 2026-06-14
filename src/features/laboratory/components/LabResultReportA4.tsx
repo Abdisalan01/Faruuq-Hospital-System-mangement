@@ -1,5 +1,4 @@
-import { THERMAL_LOGO_SRC } from '@/shared/constants/branding'
-import A4LetterFooter from '@/features/doctor/components/a4/A4LetterFooter'
+import PrintDocumentHeader from '@/shared/components/PrintDocumentHeader'
 import A4LetterPatientBox, { type A4PatientInfo } from '@/features/doctor/components/a4/A4LetterPatientBox'
 import type { LabTestItem } from '@/shared/types'
 
@@ -24,10 +23,7 @@ const LabResultReportA4 = ({ data }: LabResultReportA4Props) => {
   return (
     <div className="a4-hospital-letter">
       <div className="rx-letter-main">
-        <header className="rx-letter-header">
-          <img src={THERMAL_LOGO_SRC} alt="Faaruuq Specialist Hospital" className="rx-letter-logo" />
-          <div className="rx-header-rule" aria-hidden />
-        </header>
+        <PrintDocumentHeader variant="a4" />
 
         <div className="rx-title-block">
           <h1 className="rx-letter-title">LABORATORY RESULT REPORT</h1>
@@ -70,8 +66,6 @@ const LabResultReportA4 = ({ data }: LabResultReportA4Props) => {
           </tbody>
         </table>
       </div>
-
-      <A4LetterFooter />
     </div>
   )
 }

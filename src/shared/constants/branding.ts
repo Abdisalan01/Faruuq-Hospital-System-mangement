@@ -21,3 +21,8 @@ export const SIDEBAR_LOGO_SHORT_COLOR = pub('fsh-logo.png')
 
 /** Standard thermal receipt width (80mm roll) */
 export const THERMAL_PAPER_WIDTH_MM = 80
+
+/** Fixed contact details on all printed documents */
+export const PRINT_HOSPITAL_PHONES = '0613597979 / 0683597979'
+export const PRINT_HOSPITAL_ADDRESS =
+  'Mogadishu / Degmada Garasbaley agagaarka masjidka Al-Namciim'

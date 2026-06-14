@@ -25,14 +25,18 @@ import LabTestSelect from '@/shared/components/LabTestPicker'
 import SurgerySelect from '@/shared/components/SurgeryPicker'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
 import StatusBadge from '@/shared/components/StatusBadge'
+import TablePagination from '@/shared/components/TablePagination'
+import { useTablePagination } from '@/shared/hooks/useTablePagination'
 import type { Admission, Permission, PrescriptionItem } from '@/shared/types'
 import {
   beds,
-  calculateLabRequestSubtotal,
   createInpatientPrescription,
-  generateId,
-  generateNumber,
-  persistPharmacyDispenseNowAsync,
+  createLabRequestForVisit,
+  persistAdmissionAssignmentNowAsync,
+  persistDoctorConsultationNowAsync,
+  persistInpatientMedicineApprovalNowAsync,
+  persistInpatientPaymentNowAsync,
+  persistLabRequestNowAsync,
   getActiveAdmissionForVisit,
   saveSurgeryRequestForVisit,
   getPatientById,
@@ -133,6 +137,14 @@ const ClinicalInpatientsView = ({
     })
   }, [admissions, search, statusFilter, tick, dataVersion])
 
+  const filteredPagination = useTablePagination(filtered, 10, [
+    filtered.length,
+    search,
+    statusFilter,
+    tick,
+    dataVersion,
+  ])
+
   const openAdmission = (adm: Admission) => {
     setSelectedAdmission(adm)
     setActionMsg('')
@@ -156,13 +168,21 @@ const ClinicalInpatientsView = ({
   const visitLabs = modalVisit ? labRequests.filter((l) => l.visitId === modalVisit.id) : []
   const visitSurgeries = modalVisit ? surgeryRequests.filter((s) => s.visitId === modalVisit.id) : []
 
-  const handleDischarge = () => {
+  const handleDischarge = async () => {
     if (!selectedAdmission) return
     if (!window.confirm('Discharge this patient? They can go home and status will become Active.')) return
     const ok = dischargeAdmission(selectedAdmission.id)
-    if (ok) {
-      setActionMsg('Patient discharged — they can go home. Status is now Active.')
+    if (!ok) return
+
+    try {
+      if (isSupabase) await persistAdmissionAssignmentNowAsync()
+      setActionMsg(
+        `Patient discharged — they can go home. Status is now Active.${isSupabase ? ' Saved to database.' : ''}`,
+      )
       setSelectedAdmission(null)
+      refresh()
+    } catch {
+      setActionMsg('Discharged locally but database save failed.')
       refresh()
     }
   }
@@ -194,7 +214,7 @@ const ClinicalInpatientsView = ({
     refreshVisitWorkflow(modalVisit.id)
 
     try {
-      if (isSupabase) await persistPharmacyDispenseNowAsync()
+      if (isSupabase) await persistInpatientMedicineApprovalNowAsync()
     } catch {
       setActionMsg('Prescription sent locally but database save failed.')
       refresh()
@@ -212,31 +232,36 @@ const ClinicalInpatientsView = ({
     refresh()
   }
 
-  const handleSaveLab = () => {
+  const handleSaveLab = async () => {
     if (!modalVisit || !canOrderClinical) return
     const doctorId = resolveOrderDoctorId()
     if (!doctorId) return
     const testNames = labTests.filter((n) => n.trim())
     if (testNames.length === 0) return
-    const tests = testNames.map((testName) => ({ testName }))
-    labRequests.push({
-      id: generateId('lab'),
-      requestNumber: generateNumber('LR'),
-      visitId: modalVisit.id,
-      patientId: modalVisit.patientId,
-      doctorId,
-      tests,
-      status: 'Awaiting Payment',
-      totalFee: calculateLabRequestSubtotal(tests),
-      createdAt: new Date().toISOString(),
-    })
-    refreshVisitWorkflow(modalVisit.id)
-    setActionMsg('Lab request sent to reception for payment.')
-    setLabTests([''])
-    refresh()
+
+    try {
+      const lab = createLabRequestForVisit({
+        visitId: modalVisit.id,
+        patientId: modalVisit.patientId,
+        doctorId,
+        testNames,
+      })
+      refreshVisitWorkflow(modalVisit.id)
+
+      if (isSupabase) await persistLabRequestNowAsync(lab.id)
+
+      setActionMsg(
+        `Lab request sent to reception for payment.${isSupabase ? ' Saved to database.' : ''}`,
+      )
+      setLabTests([''])
+      refresh()
+    } catch {
+      setActionMsg('Lab request created locally but database save failed.')
+      refresh()
+    }
   }
 
-  const handleSaveSurgery = () => {
+  const handleSaveSurgery = async () => {
     if (!modalVisit || !canOrderClinical || !surgeryCatalogId) return
     const doctorId = resolveOrderDoctorId()
     if (!doctorId) return
@@ -249,16 +274,29 @@ const ClinicalInpatientsView = ({
         notes: surgeryNotes.trim(),
       })
       refreshVisitWorkflow(modalVisit.id)
+
+      if (isSupabase) {
+        await persistDoctorConsultationNowAsync({
+          visitId: modalVisit.id,
+          patientId: modalVisit.patientId,
+        })
+        if (surgeryReq.paymentMethod === 'Credit Book') {
+          await persistInpatientPaymentNowAsync()
+        }
+      }
+
       setActionMsg(
-        surgeryReq.paymentMethod === 'Credit Book'
+        `${surgeryReq.paymentMethod === 'Credit Book'
           ? 'Surgery ordered — fee attached to inpatient credit book. Reception will schedule.'
-          : 'Surgery request submitted — patient pays at Reception Surgery.',
+          : 'Surgery request submitted — patient pays at Reception Surgery.'}${isSupabase ? ' Saved to database.' : ''}`,
       )
       setSurgeryCatalogId('')
       setSurgeryNotes('')
       refresh()
     } catch (err) {
-      setActionMsg(err instanceof Error ? err.message : 'Could not save surgery request')
+      setActionMsg(
+        err instanceof Error ? err.message : 'Could not save surgery request to database',
+      )
     }
   }
 
@@ -321,8 +359,9 @@ const ClinicalInpatientsView = ({
           <CardBody className="text-center text-muted py-5">No inpatients match your search or filter.</CardBody>
         </Card>
       ) : (
-        <Row>
-          {filtered.map((adm) => {
+        <>
+          <Row>
+            {filteredPagination.pageItems.map((adm) => {
             const patient = getPatientById(adm.patientId)
             const visit = getVisitById(adm.visitId)
             const doctor = visit?.assignedDoctorId ? getStaffById(visit.assignedDoctorId) : undefined
@@ -384,8 +423,18 @@ const ClinicalInpatientsView = ({
                 </Card>
               </Col>
             )
-          })}
-        </Row>
+            })}
+          </Row>
+          <TablePagination
+            className="pt-3 border-top mt-3"
+            totalItems={filteredPagination.totalItems}
+            rangeStart={filteredPagination.rangeStart}
+            rangeEnd={filteredPagination.rangeEnd}
+            safePage={filteredPagination.safePage}
+            totalPages={filteredPagination.totalPages}
+            onPageChange={filteredPagination.setPage}
+          />
+        </>
       )}
 
       <Modal show={!!selectedAdmission} onHide={() => setSelectedAdmission(null)} size="lg" centered scrollable>

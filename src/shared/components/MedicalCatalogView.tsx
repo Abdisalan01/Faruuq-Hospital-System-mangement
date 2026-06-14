@@ -9,14 +9,14 @@ import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
 import StatusBadge from '@/shared/components/StatusBadge'
 import {
-  deleteMedicineCatalogEntry,
+  deleteMedicineCatalogEntryAndPersist,
   getInventoryForMedicine,
   inventoryItems,
   medicineCatalog,
   persistMedicalCatalogNowAsync,
   peekNextMedicineCode,
-  restockMedicine,
-  saveMedicineCatalogEntry,
+  restockMedicineAndPersist,
+  saveMedicineCatalogEntryAndPersist,
   syncAllMedicineActiveStatuses,
   systemSettings,
 } from '@/shared/services/hmsStore'
@@ -68,6 +68,7 @@ const MedicalCatalogView = ({ breadcrumbs, permissions }: MedicalCatalogViewProp
     null,
   )
   const [pageMessage, setPageMessage] = useState('')
+  const [pageError, setPageError] = useState('')
 
   const [name, setName] = useState('')
   const [category, setCategory] = useState('')
@@ -185,27 +186,6 @@ const MedicalCatalogView = ({ breadcrumbs, permissions }: MedicalCatalogViewProp
     setShowDeleteModal(true)
   }
 
-  const persistCatalog = async (successMessage: string) => {
-    if (!isSupabase) {
-      setPageMessage(`${successMessage} (database mode is off — enable VITE_USE_SUPABASE in .env)`)
-      refresh()
-      return
-    }
-
-    setSaving(true)
-    try {
-      await persistMedicalCatalogNowAsync()
-      setPageMessage(`${successMessage} Saved to database.`)
-      refresh()
-    } catch (err) {
-      const detail = err instanceof Error ? err.message : 'Unknown error'
-      setPageMessage(`Database save failed: ${detail}`)
-      refresh()
-    } finally {
-      setSaving(false)
-    }
-  }
-
   const openImport = () => {
     setImportFile(null)
     setImportMessage(null)
@@ -239,9 +219,14 @@ const MedicalCatalogView = ({ breadcrumbs, permissions }: MedicalCatalogViewProp
       setFormError('Medicine name, category, and unit are required.')
       return
     }
+    if (sellingPrice < 0 || Number.isNaN(sellingPrice) || purchasePrice < 0 || Number.isNaN(purchasePrice)) {
+      setFormError('Prices must be valid non-negative numbers.')
+      return
+    }
 
     try {
-      const saved = saveMedicineCatalogEntry({
+      setSaving(true)
+      const saved = await saveMedicineCatalogEntryAndPersist({
         id: editId ?? undefined,
         medicineId: medicineCode.trim() || undefined,
         name: name.trim(),
@@ -255,43 +240,79 @@ const MedicalCatalogView = ({ breadcrumbs, permissions }: MedicalCatalogViewProp
       })
 
       setShowModal(false)
-      await persistCatalog(
-        editId
-          ? `Medical item ${saved.medicineId} updated.`
-          : `Medical item saved with code ${saved.medicineId}.`,
-      )
+      if (isSupabase) {
+        setPageMessage(
+          editId
+            ? `Medical item ${saved.medicineId} updated. Saved to database.`
+            : `Medical item saved with code ${saved.medicineId}. Saved to database.`,
+        )
+      } else {
+        setPageMessage(
+          editId
+            ? `Medical item ${saved.medicineId} updated. (database mode is off)`
+            : `Medical item saved with code ${saved.medicineId}. (database mode is off)`,
+        )
+      }
+      refresh()
     } catch (err) {
       setFormError(err instanceof Error ? err.message : 'Could not save medical item')
+    } finally {
+      setSaving(false)
     }
   }
 
   const handleDelete = async () => {
     if (!deleteTarget) return
 
+    const deletedName = deleteTarget.name
     try {
-      deleteMedicineCatalogEntry(deleteTarget.id)
+      setSaving(true)
+      if (isSupabase) {
+        await deleteMedicineCatalogEntryAndPersist(deleteTarget.id)
+        setPageMessage(`${deletedName} deleted. Saved to database.`)
+      } else {
+        setPageError('Database mode is off — enable VITE_USE_SUPABASE in .env')
+        return
+      }
       setShowDeleteModal(false)
       setDeleteTarget(null)
-      await persistCatalog(`${deleteTarget.name} deleted.`)
-    } catch (err) {
-      setPageMessage(err instanceof Error ? err.message : 'Could not delete medicine')
       refresh()
+    } catch (err) {
+      setPageError(err instanceof Error ? err.message : 'Could not delete medicine')
+      refresh()
+    } finally {
+      setSaving(false)
     }
   }
 
   const handleRestock = async () => {
     if (!restockItem || restockQty <= 0) return
 
-    restockMedicine({
-      medicineId: restockItem.medicineId,
-      addQuantity: restockQty,
-      purchasePrice: restockPurchase || undefined,
-      sellingPrice: restockSelling || undefined,
-      reorderLevel: restockReorder,
-    })
-
-    setShowRestockModal(false)
-    await persistCatalog(`${restockItem.name} restocked — ${restockQty} units added. Status set to Active.`)
+    try {
+      setSaving(true)
+      if (isSupabase) {
+        await restockMedicineAndPersist({
+          medicineId: restockItem.medicineId,
+          addQuantity: restockQty,
+          purchasePrice: restockPurchase || undefined,
+          sellingPrice: restockSelling || undefined,
+          reorderLevel: restockReorder,
+        })
+        setPageMessage(
+          `${restockItem.name} restocked — ${restockQty} units added. Status set to Active. Saved to database.`,
+        )
+      } else {
+        setPageError('Database mode is off — enable VITE_USE_SUPABASE in .env')
+        return
+      }
+      setShowRestockModal(false)
+      refresh()
+    } catch (err) {
+      setPageError(err instanceof Error ? err.message : 'Could not restock medicine')
+      refresh()
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleImport = async () => {
@@ -361,6 +382,11 @@ const MedicalCatalogView = ({ breadcrumbs, permissions }: MedicalCatalogViewProp
       {pageMessage && (
         <Alert variant="success" dismissible onClose={() => setPageMessage('')} className="py-2">
           {pageMessage}
+        </Alert>
+      )}
+      {pageError && (
+        <Alert variant="danger" dismissible onClose={() => setPageError('')} className="py-2">
+          {pageError}
         </Alert>
       )}
 

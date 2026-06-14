@@ -65,7 +65,7 @@ const PatientEditPage = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { user } = useAuthContext()
-  const { dataVersion, isReady } = useHmsStoreContext()
+  const { dataVersion } = useHmsStoreContext()
   void dataVersion
 
   const patient = id ? getPatientById(id) : undefined
@@ -148,18 +148,6 @@ const PatientEditPage = () => {
     () => (patient ? getFollowUpActivationInfo(patient.id) : null),
     [patient, dataVersion],
   )
-
-  if (!isReady) {
-    return (
-      <PermissionGuard permissions={['register_patients']}>
-        <PageMetaData title="Edit Patient" />
-        <div className="d-flex flex-column align-items-center justify-content-center py-5 gap-2">
-          <div className="spinner-border spinner-border-sm text-primary" role="status" />
-          <p className="text-muted mb-0 small">Loading patient data…</p>
-        </div>
-      </PermissionGuard>
-    )
-  }
 
   if (!patient) {
     return (

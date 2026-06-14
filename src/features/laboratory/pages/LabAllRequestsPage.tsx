@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Button, Card, CardBody, Col, Form, Row, Table } from 'react-bootstrap'
+import { Alert, Button, Card, CardBody, Col, Form, Row, Table } from 'react-bootstrap'
 import { Link } from 'react-router-dom'
 
 import PageMetaData from '@/components/PageTitle'
@@ -34,19 +34,18 @@ const getDoctorName = (doctorId: string) => {
 }
 
 const LabAllRequestsPage = () => {
-  const { dataVersion, isSupabase, isReady, reload } = useHmsStoreContext()
+  const { dataVersion, isSupabase } = useHmsStoreContext()
   const [, setTick] = useState(0)
   const refresh = () => setTick((t) => t + 1)
-
-  useEffect(() => {
-    if (isSupabase && isReady) void reload()
-  }, [isSupabase, isReady, reload])
 
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('all')
   const [page, setPage] = useState(1)
   const [printData, setPrintData] = useState<LabResultReportData | null>(null)
   const [showPrintModal, setShowPrintModal] = useState(false)
+  const [actionMessage, setActionMessage] = useState<{ type: 'success' | 'danger'; text: string } | null>(
+    null,
+  )
 
   const visible = useMemo(
     () => getLabVisibleRequests().sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
@@ -97,9 +96,15 @@ const LabAllRequestsPage = () => {
     if (isSupabase) {
       try {
         await persistLabRequestNowAsync(req.id)
+        setActionMessage({ type: 'success', text: 'Test started — saved to database.' })
       } catch (err) {
-        console.warn('[Lab] Failed to save status', err)
+        setActionMessage({
+          type: 'danger',
+          text: err instanceof Error ? err.message : 'Started locally but database save failed.',
+        })
       }
+    } else {
+      setActionMessage({ type: 'success', text: 'Test started.' })
     }
   }
 
@@ -124,6 +129,17 @@ const LabAllRequestsPage = () => {
           { label: 'All Labs' },
         ]}
       />
+
+      {actionMessage && (
+        <Alert
+          variant={actionMessage.type}
+          dismissible
+          onClose={() => setActionMessage(null)}
+          className="py-2"
+        >
+          {actionMessage.text}
+        </Alert>
+      )}
 
       <Card className="mb-3">
         <CardBody>

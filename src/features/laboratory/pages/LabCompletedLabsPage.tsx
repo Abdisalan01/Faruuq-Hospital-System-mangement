@@ -4,6 +4,7 @@ import { Link } from 'react-router-dom'
 
 import PageMetaData from '@/components/PageTitle'
 import IconifyIcon from '@/components/wrappers/IconifyIcon'
+import { useHmsStoreContext } from '@/context/HmsStoreContext'
 import A4PrintModal from '@/features/doctor/components/a4/A4PrintModal'
 import LabResultReportA4 from '@/features/laboratory/components/LabResultReportA4'
 import { buildLabResultReportData } from '@/features/laboratory/utils/labResultReport'
@@ -28,6 +29,8 @@ const getDoctorName = (doctorId: string) => {
 }
 
 const LabCompletedLabsPage = () => {
+  const { dataVersion } = useHmsStoreContext()
+
   const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [printData, setPrintData] = useState<LabResultReportData | null>(null)
@@ -38,7 +41,7 @@ const LabCompletedLabsPage = () => {
       storeLabRequests
         .filter((l) => l.status === 'Completed')
         .sort((a, b) => (b.completedAt ?? b.createdAt).localeCompare(a.completedAt ?? a.createdAt)),
-    [storeLabRequests.length],
+    [storeLabRequests.length, dataVersion],
   )
 
   const filtered = useMemo(() => {

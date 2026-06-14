@@ -43,6 +43,7 @@
 @import "components/thermal-print";
 @import "components/inpatient-beds";
 @import "components/a4-prescription-print";
+@import "components/searchable-select";
 @import "components/progress";
 @import "components/reboot";
 @import "components/switch";
@@ -81,6 +82,9 @@
 @import "pages/authentication";
 @import "pages/pricing";
 @import "pages/timeline";
+@import "pages/consultation-page";
+@import "pages/financial-reports-page";
+@import "pages/pharmacy-dashboard-page";
 
 // Custom React
 @import 'custom-react';

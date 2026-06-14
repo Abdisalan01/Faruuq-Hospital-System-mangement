@@ -16,6 +16,7 @@ import { useAuthContext } from '@/context/useAuthContext'
 import { useHmsStoreContext } from '@/context/HmsStoreContext'
 import PageHeader from '@/shared/components/PageHeader'
 import LabTestSelect from '@/shared/components/LabTestPicker'
+import MedicineSearchSelect from '@/shared/components/MedicineSearchSelect'
 import SurgerySelect from '@/shared/components/SurgeryPicker'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
 import StatusBadge from '@/shared/components/StatusBadge'
@@ -38,17 +39,20 @@ import {
   getVisitById,
   getActiveLabTests,
   getActiveSurgeries,
+  labTestCatalog,
   isSurgeryFeePaid,
   labRequests,
   medicineCatalog,
   persistDoctorConsultationNowAsync,
   persistInpatientPaymentNowAsync,
+  persistLabRequestNowAsync,
   persistReleasePatientNowAsync,
   persistSurgeryFeePaymentNowAsync,
   saveAdmissionRequestForVisit,
   saveClinicalNoteForVisit,
   savePrescriptionForVisit,
   saveSurgeryRequestForVisit,
+  surgeryCatalog,
 } from '@/shared/services/hmsStore'
 import type { PrescriptionItem } from '@/shared/types'
 import PatientHistoryPanel from '@/features/doctor/components/PatientHistoryPanel'
@@ -63,7 +67,6 @@ import {
   confirmDoctorPatientRelease,
   getPatientCareDisplayStatus,
   getPatientClinicalHistory,
-  getReleaseBlockers,
   refreshVisitWorkflow,
   startConsultation,
 } from '@/shared/utils/visitConsultation'
@@ -90,7 +93,7 @@ const ConsultationPage = () => {
   const { visitId } = useParams<{ visitId: string }>()
   const [searchParams] = useSearchParams()
   const { user } = useAuthContext()
-  const { isSupabase, isReady, dataVersion, reload } = useHmsStoreContext()
+  const { isSupabase, dataVersion } = useHmsStoreContext()
   const doctorId = user?.id ?? 'staff-003'
   const [tick, setTick] = useState(0)
   const [saving, setSaving] = useState(false)
@@ -107,10 +110,13 @@ const ConsultationPage = () => {
 
   const activeMedicines = useMemo(
     () => medicineCatalog.filter((m) => m.isActive).sort((a, b) => a.name.localeCompare(b.name)),
-    [],
+    [medicineCatalog.length, dataVersion],
   )
 
-  const activeLabTestCount = useMemo(() => getActiveLabTests().length, [])
+  const activeLabTestCount = useMemo(
+    () => getActiveLabTests().length,
+    [labTestCatalog.length, dataVersion],
+  )
 
   const referredDoctorName = useMemo(() => {
     if (!visit?.assignedDoctorId) return '—'
@@ -146,15 +152,38 @@ const ConsultationPage = () => {
   const [lastLabRequestId, setLastLabRequestId] = useState<string | null>(null)
 
   useEffect(() => {
-    if (isSupabase && isReady) void reload()
-  }, [isSupabase, isReady, reload, visitId])
-
-  useEffect(() => {
     if (visit && !isReadOnly) {
       startConsultation(visit)
       refresh()
+      if (isSupabase) {
+        void persistDoctorConsultationNowAsync({
+          visitId: visit.id,
+          patientId: visit.patientId,
+        }).catch((err) => {
+          console.warn('[Consultation] Failed to persist consultation start', err)
+        })
+      }
     }
-  }, [visitId, isReadOnly])
+  }, [visitId, isReadOnly, isSupabase])
+
+  useEffect(() => {
+    if (!visitId) return
+    const note = getClinicalNoteForVisit(visitId)
+    setConsultantNote(note?.note ?? '')
+    const rx = getPrescriptionForVisit(visitId)
+    if (rx) {
+      setRxItems(rx.items.length ? rx.items : [emptyRxItem()])
+      setCanPrintRx(true)
+    }
+    const adm = getAdmissionRequestForVisit(visitId)
+    if (adm) setAdmissionReason(adm.reason)
+    const srg = getSurgeryRequestForVisit(visitId)
+    if (srg) {
+      setSurgeryCatalogId(srg.surgeryCatalogId ?? '')
+      setSurgeryNotes(srg.notes ?? '')
+      setCanPrintSurgery(true)
+    }
+  }, [visitId, dataVersion])
 
   useEffect(() => {
     const tab = searchParams.get('tab')
@@ -181,16 +210,14 @@ const ConsultationPage = () => {
     [patient?.id, visit?.id, tick, dataVersion, labRequests.length],
   )
 
-  const activeSurgeryCount = useMemo(() => getActiveSurgeries().length, [])
-
-  const releaseBlockers = useMemo(
-    () => (visitId ? getReleaseBlockers(visitId) : []),
-    [visitId, tick, dataVersion, labRequests.length],
+  const activeSurgeryCount = useMemo(
+    () => getActiveSurgeries().length,
+    [surgeryCatalog.length, dataVersion],
   )
 
   const canRelease = useMemo(
     () => (visitId ? canDoctorReleasePatient(visitId).ok : false),
-    [visitId, tick, releaseBlockers.length],
+    [visitId, tick, dataVersion],
   )
 
   const showMsg = (text: string, type: 'success' | 'danger' = 'success') => {
@@ -259,6 +286,7 @@ const ConsultationPage = () => {
       return
     }
     try {
+      const adm = getActiveAdmissionForVisit(visit.id)
       savePrescriptionForVisit({
         visitId: visit.id,
         patientId: visit.patientId,
@@ -266,8 +294,20 @@ const ConsultationPage = () => {
         items: validItems,
       })
       refreshVisitWorkflow(visit.id)
-      setCanPrintRx(true)
-      await persistToDatabase('Prescription saved. Click Print for the A4 letter.')
+      if (adm) {
+        setCanPrintRx(false)
+        await persistToDatabase(
+          'Inpatient prescription sent to Pharmacy — patient pays there or at reception cashier.',
+        )
+      } else {
+        setCanPrintRx(true)
+        await persistToDatabase('Prescription saved.')
+        const printData = buildPrescriptionPrintData()
+        if (printData) {
+          setRxPrintData(printData)
+          setShowRxPrintModal(true)
+        }
+      }
       refresh()
     } catch (err) {
       showMsg(err instanceof Error ? err.message : 'Could not save prescription', 'danger')
@@ -500,8 +540,20 @@ const ConsultationPage = () => {
       showMsg(result.error ?? 'Could not cancel lab request', 'danger')
       return
     }
-    await persistToDatabase('Lab request cancelled.')
     refresh()
+    if (!isSupabase) {
+      showMsg('Lab request cancelled.')
+      return
+    }
+    setSaving(true)
+    try {
+      await persistLabRequestNowAsync(labId)
+      showMsg('Lab request cancelled — reception Lab Fees updated.')
+    } catch (err) {
+      showMsg(err instanceof Error ? err.message : 'Cancelled locally but database save failed', 'danger')
+    } finally {
+      setSaving(false)
+    }
   }
 
   const handleCancelAdmission = async () => {
@@ -555,6 +607,7 @@ const ConsultationPage = () => {
 
   return (
     <PermissionGuard permissions={['view_assigned_patients']}>
+      <div className="consultation-page">
       <PageMetaData title={`Consultation — ${patient.fullName}`} />
       <PageHeader
         title={`Consultation: ${patient.fullName}`}
@@ -582,87 +635,123 @@ const ConsultationPage = () => {
 
       <PatientHistoryPanel history={priorHistory} />
 
-      <Card className="mb-3">
+      <Card className="consultation-patient-banner">
         <CardBody>
-          <Row>
-            <Col md={3}>
-              <p className="text-muted mb-1">Patient</p>
-              <h5 className="mb-0">{patient.fullName}</h5>
+          <div className="d-flex flex-wrap justify-content-between align-items-start gap-2">
+            <div>
+              <p className="consultation-meta-label mb-0">Patient</p>
+              <h5 className="consultation-patient-name">{patient.fullName}</h5>
               <div className="d-flex flex-wrap gap-1 align-items-center mt-1">
                 <StatusBadge status={getPatientCareDisplayStatus(visit)} />
                 {['Completed', 'Cancelled'].includes(visit.status) && (
                   <StatusBadge status="Completed" />
                 )}
-                {!['Completed', 'Cancelled', 'Waiting'].includes(visit.status) && (
-                  <Button
-                    size="sm"
-                    variant="success"
-                    onClick={handleConfirmRelease}
-                    disabled={saving || !canRelease}
-                    title={
-                      !canRelease && releaseBlockers.length > 0
-                        ? 'Cancel open lab, surgery, or in-patient orders first'
-                        : undefined
-                    }
-                  >
-                    <IconifyIcon icon="solar:check-circle-broken" className="me-1" />
-                    {saving ? 'Releasing...' : 'Release patient'}
-                  </Button>
-                )}
               </div>
-              {releaseBlockers.length > 0 && !['Completed', 'Cancelled'].includes(visit.status) && (
-                <Alert variant="warning" className="mt-2 mb-0 py-2 small">
-                  <strong>Release blocked.</strong> Cancel these open orders first:
-                  <ul className="mb-0 mt-1">
-                    {releaseBlockers.map((b, i) => (
-                      <li key={i}>
-                        {b.label}
-                        {b.canCancel ? ' — use Cancel on the tab below' : ' — contact reception or complete care'}
-                      </li>
-                    ))}
-                  </ul>
-                </Alert>
-              )}
-            </Col>
-            <Col md={3}>
-              <p className="text-muted mb-1">Age / Gender</p>
-              <p className="mb-0">
-                {patient.age} / {patient.gender}
-              </p>
-            </Col>
-            <Col md={3}>
-              <p className="text-muted mb-1">Phone</p>
-              <p className="mb-0">{patient.phone}</p>
-            </Col>
-          </Row>
+            </div>
+            {!['Completed', 'Cancelled', 'Waiting'].includes(visit.status) && (
+              <Button
+                size="sm"
+                variant="success"
+                onClick={handleConfirmRelease}
+                disabled={saving || !canRelease}
+              >
+                <IconifyIcon icon="solar:check-circle-broken" className="me-1" />
+                {saving ? 'Releasing...' : 'Release patient'}
+              </Button>
+            )}
+          </div>
+          <div className="consultation-meta-grid">
+            <div className="consultation-meta-item">
+              <span className="consultation-meta-icon">
+                <IconifyIcon icon="solar:user-broken" />
+              </span>
+              <div>
+                <p className="consultation-meta-label">Age / Gender</p>
+                <p className="consultation-meta-value">
+                  {patient.age} / {patient.gender}
+                </p>
+              </div>
+            </div>
+            <div className="consultation-meta-item">
+              <span className="consultation-meta-icon">
+                <IconifyIcon icon="solar:phone-broken" />
+              </span>
+              <div>
+                <p className="consultation-meta-label">Phone</p>
+                <p className="consultation-meta-value">{patient.phone}</p>
+              </div>
+            </div>
+            <div className="consultation-meta-item">
+              <span className="consultation-meta-icon">
+                <IconifyIcon icon="solar:calendar-broken" />
+              </span>
+              <div>
+                <p className="consultation-meta-label">Visit</p>
+                <p className="consultation-meta-value">
+                  {visit.visitNumber} · {visit.visitDate}
+                </p>
+              </div>
+            </div>
+            <div className="consultation-meta-item">
+              <span className="consultation-meta-icon">
+                <IconifyIcon icon="solar:stethoscope-broken" />
+              </span>
+              <div>
+                <p className="consultation-meta-label">Doctor</p>
+                <p className="consultation-meta-value">{referredDoctorName}</p>
+              </div>
+            </div>
+          </div>
         </CardBody>
       </Card>
 
       <Tab.Container activeKey={activeTab} onSelect={(k) => setActiveTab(k ?? 'notes')}>
-        <Nav variant="tabs" className="mb-3">
+        <Nav variant="pills" className="consultation-tab-nav">
           <Nav.Item>
-            <Nav.Link eventKey="notes">Consultant Node</Nav.Link>
+            <Nav.Link eventKey="notes">
+              <IconifyIcon icon="solar:document-text-broken" />
+              Consultation Notes
+            </Nav.Link>
           </Nav.Item>
           <Nav.Item>
-            <Nav.Link eventKey="prescription">Prescription</Nav.Link>
+            <Nav.Link eventKey="prescription">
+              <IconifyIcon icon="solar:pill-broken" />
+              Prescription
+            </Nav.Link>
           </Nav.Item>
           <Nav.Item>
-            <Nav.Link eventKey="lab">Lab Request</Nav.Link>
+            <Nav.Link eventKey="lab">
+              <IconifyIcon icon="solar:test-tube-broken" />
+              Lab Request
+            </Nav.Link>
           </Nav.Item>
           <Nav.Item>
-            <Nav.Link eventKey="admission">Order In-Patient</Nav.Link>
+            <Nav.Link eventKey="admission">
+              <IconifyIcon icon="solar:bed-broken" />
+              Order In-Patient
+            </Nav.Link>
           </Nav.Item>
           <Nav.Item>
-            <Nav.Link eventKey="surgery">Surgery</Nav.Link>
+            <Nav.Link eventKey="surgery">
+              <IconifyIcon icon="solar:scalpel-broken" />
+              Surgery
+            </Nav.Link>
           </Nav.Item>
         </Nav>
 
         <Tab.Content>
           <Tab.Pane eventKey="notes">
-            <Card>
+            <Card className="consultation-section-card">
               <CardBody>
+                <div className="consultation-section-title">
+                  <IconifyIcon icon="solar:document-text-broken" />
+                  Consultation Notes
+                </div>
+                <p className="consultation-section-hint">
+                  Record clinical findings, diagnosis, and treatment plan for this visit.
+                </p>
                 <Form.Group className="mb-3">
-                  <Form.Label>Consultant Node</Form.Label>
+                  <Form.Label>Notes</Form.Label>
                   <Form.Control
                     as="textarea"
                     rows={6}
@@ -673,14 +762,16 @@ const ConsultationPage = () => {
                     disabled={isReadOnly}
                   />
                 </Form.Group>
-                <Button
-                  variant="primary"
-                  onClick={saveConsultantNote}
-                  disabled={saving || isReadOnly}
-                >
-                  <IconifyIcon icon="solar:diskette-broken" className="me-1" />
-                  {saving ? 'Saving...' : 'Save Consultant Node'}
-                </Button>
+                <div className="consultation-action-bar">
+                  <Button
+                    variant="primary"
+                    onClick={saveConsultantNote}
+                    disabled={saving || isReadOnly}
+                  >
+                    <IconifyIcon icon="solar:diskette-broken" className="me-1" />
+                    {saving ? 'Saving...' : 'Save Notes'}
+                  </Button>
+                </div>
               </CardBody>
             </Card>
           </Tab.Pane>
@@ -749,28 +840,27 @@ const ConsultationPage = () => {
               </Card>
             )}
             {!isReadOnly && (
-            <Card>
+            <Card className="consultation-section-card">
               <CardBody>
-                <p className="text-muted small mb-3">
-                  Select medicines from the hospital catalog ({activeMedicines.length} available). Print on A4
-                  prescription letter.
+                <div className="consultation-section-title">
+                  <IconifyIcon icon="solar:pill-broken" />
+                  New Prescription
+                </div>
+                <p className="consultation-section-hint">
+                  Search and select medicines from the hospital catalog ({activeMedicines.length} available).
+                  Print on A4 prescription letter.
                 </p>
                 {rxItems.map((item, idx) => (
-                  <Row key={idx} className="mb-3 border-bottom pb-3">
+                  <div key={idx} className="consultation-rx-row">
+                    <Row className="g-3">
                     <Col md={3}>
                       <Form.Group>
                         <Form.Label>Medicine</Form.Label>
-                        <Form.Select
+                        <MedicineSearchSelect
                           value={item.medicine}
-                          onChange={(e) => selectMedicine(idx, e.target.value)}
-                        >
-                          <option value="">Select medicine...</option>
-                          {activeMedicines.map((m) => (
-                            <option key={m.id} value={m.name}>
-                              {m.name} ({m.unit})
-                            </option>
-                          ))}
-                        </Form.Select>
+                          onChange={(value) => selectMedicine(idx, value)}
+                          excludeNames={rxItems.filter((_, i) => i !== idx).map((r) => r.medicine)}
+                        />
                       </Form.Group>
                     </Col>
                     <Col md={2}>
@@ -820,7 +910,8 @@ const ConsultationPage = () => {
                         </Button>
                       )}
                     </Col>
-                  </Row>
+                    </Row>
+                  </div>
                 ))}
                 <Form.Group className="mb-3">
                   <Form.Label>Follow-up note (on printed letter)</Form.Label>
@@ -830,7 +921,7 @@ const ConsultationPage = () => {
                     placeholder="Soo laabshadu waa muddo 2 isbuuc ah."
                   />
                 </Form.Group>
-                <div className="d-flex flex-wrap gap-2">
+                <div className="consultation-action-bar">
                   <Button variant="outline-secondary" onClick={addRxItem}>
                     <IconifyIcon icon="bx:plus" className="me-1" />
                     Add Medicine
@@ -982,15 +1073,15 @@ const ConsultationPage = () => {
               </Card>
             )}
             {!isReadOnly && (
-            <Card>
+            <Card className="consultation-section-card">
               <CardBody>
-                <h6 className="mb-2">
-                  {visitLabs.length > 0 ? 'New lab request (Lab 2, 3, …)' : 'Lab request'}
-                </h6>
-                <p className="text-muted small mb-3">
-                  Select tests from the hospital catalog ({activeLabTestCount} available). Tests are grouped by
-                  Laboratory, Radiology, and Imaging. Each save creates a separate lab order sent to reception for
-                  payment.
+                <div className="consultation-section-title">
+                  <IconifyIcon icon="solar:test-tube-broken" />
+                  {visitLabs.length > 0 ? 'New Lab Request' : 'Lab Request'}
+                </div>
+                <p className="consultation-section-hint">
+                  Search and select tests from the hospital catalog ({activeLabTestCount} available).
+                  Each save creates a separate lab order sent to reception for payment.
                 </p>
                 {newLabTests.map((testName, idx) => (
                   <Row key={idx} className="mb-3 align-items-end">
@@ -1013,7 +1104,7 @@ const ConsultationPage = () => {
                     </Col>
                   </Row>
                 ))}
-                <div className="d-flex flex-wrap gap-2">
+                <div className="consultation-action-bar">
                   <Button variant="outline-secondary" onClick={addLabTest}>
                     <IconifyIcon icon="bx:plus" className="me-1" />
                     Add Test
@@ -1035,8 +1126,12 @@ const ConsultationPage = () => {
           </Tab.Pane>
 
           <Tab.Pane eventKey="admission">
-            <Card>
+            <Card className="consultation-section-card">
               <CardBody>
+                <div className="consultation-section-title">
+                  <IconifyIcon icon="solar:bed-broken" />
+                  Order In-Patient
+                </div>
                 {existingAdmission && (
                   <Alert
                     variant={existingAdmission.status === 'Assigned' ? 'success' : 'info'}
@@ -1091,8 +1186,12 @@ const ConsultationPage = () => {
           </Tab.Pane>
 
           <Tab.Pane eventKey="surgery">
-            <Card>
+            <Card className="consultation-section-card">
               <CardBody>
+                <div className="consultation-section-title">
+                  <IconifyIcon icon="solar:scalpel-broken" />
+                  Surgery Request
+                </div>
                 {existingSurgery?.status === 'Completed' ? (
                   <>
                     <Alert variant="success" className="mb-3">
@@ -1160,8 +1259,8 @@ const ConsultationPage = () => {
                         account automatically. Reception only needs to schedule the date.
                       </Alert>
                     )}
-                    <p className="text-muted small mb-3">
-                      Select from catalog ({activeSurgeryCount} active) — grouped by General, Orthopedic, Cardiac.
+                    <p className="consultation-section-hint">
+                      Search and select from catalog ({activeSurgeryCount} active) — grouped by category.
                     </p>
                     <Form.Group className="mb-3">
                       <Form.Label>Surgery</Form.Label>
@@ -1199,7 +1298,7 @@ const ConsultationPage = () => {
                         Current status: <strong>{getDoctorSurgeryStatusLabel(existingSurgery)}</strong>
                       </p>
                     )}
-                    <div className="d-flex flex-wrap gap-2">
+                    <div className="consultation-action-bar">
                       <Button variant="primary" onClick={saveSurgeryRequest} disabled={saving}>
                         <IconifyIcon icon="solar:check-circle-broken" className="me-1" />
                         {saving ? 'Saving...' : 'Submit'}
@@ -1248,6 +1347,7 @@ const ConsultationPage = () => {
       >
         {surgeryPrintData && <SurgeryRequestLetterA4 data={surgeryPrintData} />}
       </A4PrintModal>
+      </div>
     </PermissionGuard>
   )
 }

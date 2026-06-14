@@ -4,6 +4,8 @@ import { Alert, Button, Card, CardBody, Col, Form, Row, Table } from 'react-boot
 import PageMetaData from '@/components/PageTitle'
 import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
+import TablePagination from '@/shared/components/TablePagination'
+import { useTablePagination } from '@/shared/hooks/useTablePagination'
 import { currency } from '@/context/constants'
 import { useHmsStoreContext } from '@/context/HmsStoreContext'
 import {
@@ -81,6 +83,8 @@ const AdminPatientNumberFeePage = () => {
   }
 
   const selectedStaff = referralStaff.find((s) => s.id === selectedStaffId)
+
+  const referralStaffPagination = useTablePagination(referralStaff, 10, [referralStaff.length, dataVersion])
 
   return (
     <PermissionGuard permissions={['system_settings']}>
@@ -191,7 +195,7 @@ const AdminPatientNumberFeePage = () => {
                     </td>
                   </tr>
                 ) : (
-                  referralStaff.map((staff) => (
+                  referralStaffPagination.pageItems.map((staff) => (
                     <tr key={staff.id}>
                       <td className="fw-medium">
                         {staff.role === 'doctor'
@@ -209,6 +213,15 @@ const AdminPatientNumberFeePage = () => {
               </tbody>
             </Table>
           </div>
+          <TablePagination
+            className="pt-3 border-top mt-3"
+            totalItems={referralStaffPagination.totalItems}
+            rangeStart={referralStaffPagination.rangeStart}
+            rangeEnd={referralStaffPagination.rangeEnd}
+            safePage={referralStaffPagination.safePage}
+            totalPages={referralStaffPagination.totalPages}
+            onPageChange={referralStaffPagination.setPage}
+          />
         </CardBody>
       </Card>
     </PermissionGuard>

@@ -67,6 +67,13 @@ const ReceptionDashboardPage = () => {
           variant="danger"
           link="/hms/reception/all-inpatients"
         />
+        <StatCard
+          title="Obstetric Pending"
+          value={stats.obstetricPendingPayments}
+          icon="solar:heart-pulse-broken"
+          variant="info"
+          link="/hms/reception/obstetric"
+        />
       </Row>
 
       {unpaidAlerts.length > 0 && (

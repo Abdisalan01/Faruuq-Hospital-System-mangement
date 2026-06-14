@@ -29,13 +29,15 @@ import {
   admissionRequests as allRequests,
   getRoomById,
   getStaffById,
+  getVisitById,
   rooms,
   updateInpatientRoomBedByAdmission,
   persistAdmissionAssignmentNowAsync,
 } from '@/shared/services/hmsStore'
-import type { AdmissionRequest, InpatientBillingMode } from '@/shared/types'
+import type { AdmissionRequest } from '@/shared/types'
+import InpatientChargesSection from '@/features/reception/components/InpatientChargesSection'
 import InpatientRoomBedFields from '@/features/reception/components/InpatientRoomBedFields'
-import { refreshVisitWorkflow } from '@/shared/utils/visitConsultation'
+import { isReceptionAdmissionVisible, refreshVisitWorkflow } from '@/shared/utils/visitConsultation'
 
 type ReqFilter = 'all' | 'pending' | 'assigned'
 
@@ -45,24 +47,33 @@ const ReceptionInpatientRequestPage = () => {
   const { user } = useAuthContext()
   const { isSupabase, dataVersion } = useHmsStoreContext()
   const receptionId = user?.id ?? 'staff-002'
-  const [tick, setTick] = useState(0)
-  const refresh = () => setTick((t) => t + 1)
-
+  const userRole = user?.role ?? 'reception_cashier'
   const [search, setSearch] = useState('')
   const [filter, setFilter] = useState<ReqFilter>('pending')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<AdmissionRequest | null>(null)
   const [roomId, setRoomId] = useState('')
   const [bedId, setBedId] = useState('')
-  const [billingMode, setBillingMode] = useState<InpatientBillingMode>('credit_book')
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
 
   const isEditMode = selected?.status === 'Assigned'
 
+  const admissionSyncKey = useMemo(
+    () =>
+      storeRequests
+        .map((r) => {
+          const visit = getVisitById(r.visitId)
+          return `${r.id}:${r.status}:${r.lastModifiedAt ?? ''}:${visit?.status ?? ''}`
+        })
+        .join('|'),
+    [dataVersion, storeRequests.length],
+  )
+
   const filtered = useMemo(() => {
     const q = search.toLowerCase().trim()
     const source = allRequests.filter((req) => {
+      if (!isReceptionAdmissionVisible(req)) return false
       if (filter === 'pending') return req.status === 'Pending'
       if (filter === 'assigned') return req.status === 'Assigned'
       return req.status === 'Pending' || req.status === 'Assigned'
@@ -81,7 +92,7 @@ const ReceptionInpatientRequestPage = () => {
         .toLowerCase()
       return hay.includes(q)
     })
-  }, [search, filter, storeRequests.length, tick, dataVersion])
+  }, [search, filter, admissionSyncKey])
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
   const safePage = Math.min(page, totalPages)
@@ -111,19 +122,13 @@ const ReceptionInpatientRequestPage = () => {
   const openRequest = (req: AdmissionRequest) => {
     setSelected(req)
     setError('')
-    const adm =
-      req.status === 'Assigned'
-        ? ensureAdmissionForAssignedRequest(req) ?? getAdmissionForRequest(req)
-        : getAdmissionForRequest(req)
     if (req.status === 'Assigned' && req.roomId && req.bedId) {
       setRoomId(req.roomId)
       setBedId(req.bedId)
-      setBillingMode(req.billingMode ?? adm?.billingMode ?? 'credit_book')
     } else {
       const firstWithBeds = rooms.find((r) => getAvailableBedCountInRoom(r.id) > 0)
       setRoomId(firstWithBeds?.id ?? '')
       setBedId('')
-      setBillingMode('credit_book')
     }
   }
 
@@ -141,7 +146,7 @@ const ReceptionInpatientRequestPage = () => {
         setError('Active admission not found for this patient.')
         return
       }
-      const result = updateInpatientRoomBedByAdmission(adm.id, roomId, bedId, billingMode)
+      const result = updateInpatientRoomBedByAdmission(adm.id, roomId, bedId)
       if (!result.ok) {
         setError(result.error ?? 'Could not update assignment.')
         return
@@ -155,12 +160,11 @@ const ReceptionInpatientRequestPage = () => {
         setError(err instanceof Error ? err.message : 'Updated locally but database save failed.')
       }
       setSelected(null)
-      refresh()
       return
     }
 
     try {
-      const admission = assignAdmissionRequest(selected.id, roomId, bedId, billingMode, receptionId)
+      const admission = assignAdmissionRequest(selected.id, roomId, bedId, receptionId)
       refreshVisitWorkflow(admission.visitId)
       if (isSupabase) await persistAdmissionAssignmentNowAsync()
       setFilter('assigned')
@@ -168,7 +172,6 @@ const ReceptionInpatientRequestPage = () => {
         `${patient?.fullName} — status Assigned. Room & bed saved. See All Inpatients.`,
       )
       setSelected(null)
-      refresh()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed')
     }
@@ -343,7 +346,7 @@ const ReceptionInpatientRequestPage = () => {
 
             {isEditMode && (
               <Alert variant="info" className="py-2 small">
-                This patient is already admitted. You can change room, bed, or billing mode.
+                This patient is already admitted. You can change room or bed below.
               </Alert>
             )}
 
@@ -381,14 +384,25 @@ const ReceptionInpatientRequestPage = () => {
             <InpatientRoomBedFields
               roomId={roomId}
               bedId={bedId}
-              billingMode={billingMode}
               onRoomChange={setRoomId}
               onBedChange={setBedId}
-              onBillingModeChange={setBillingMode}
               isEditMode={isEditMode}
               excludeAdmissionId={excludeAdmissionId}
               currentBedId={currentBedId}
             />
+
+            {isEditMode && activeAdmission && (
+              <InpatientChargesSection
+                admissionId={activeAdmission.id}
+                receptionId={receptionId}
+                userRole={userRole}
+                isSupabase={isSupabase}
+                dataVersion={dataVersion}
+                onRefresh={() => {}}
+                compact
+                showDiscount={false}
+              />
+            )}
           </Modal.Body>
           <Modal.Footer>
             <Button variant="light" onClick={() => setSelected(null)}>

@@ -10,7 +10,6 @@ import {
   Form,
   Modal,
   Row,
-  Table,
 } from 'react-bootstrap'
 
 import PageMetaData from '@/components/PageTitle'
@@ -18,44 +17,31 @@ import IconifyIcon from '@/components/wrappers/IconifyIcon'
 import { currency } from '@/context/constants'
 import { useAuthContext } from '@/context/useAuthContext'
 import { useHmsStoreContext } from '@/context/HmsStoreContext'
-import InpatientBillingModeSelector from '@/features/reception/components/InpatientBillingModeSelector'
+import InpatientChargesSection from '@/features/reception/components/InpatientChargesSection'
 import InpatientRoomBedFields from '@/features/reception/components/InpatientRoomBedFields'
 import InpatientUnpaidAlertCards from '@/features/reception/components/InpatientUnpaidAlertCards'
-import PrintableReceipt from '@/features/reception/components/PrintableReceipt'
 import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
+import TablePagination from '@/shared/components/TablePagination'
+import { useTablePagination } from '@/shared/hooks/useTablePagination'
 import type {
   Admission,
-  InpatientBillingMode,
-  InpatientChargeRow,
   InpatientUnpaidAlert,
-  ReceptionReceipt,
 } from '@/shared/types'
 import {
   admissions,
   beds,
-  buildInpatientChargeReceipt,
-  clampDiscountPercent,
-  collectInpatientChargePayment,
-  collectInpatientTotalPayment,
-  getMaxDiscountPercent,
-  isInpatientChargePaid,
   getAdmissionById,
   getAllInpatientAdmissions,
-  getInpatientBillingLedger,
-  getInpatientOutstandingTotal,
-  getLatestInpatientCheckoutReceipt,
   getPatientById,
   getReceptionInpatientUnpaidAlerts,
   getRoomById,
   getStaffById,
   getVisitById,
   persistAdmissionAssignmentNowAsync,
-  persistInpatientPaymentNowAsync,
   rooms,
   updateInpatientRoomBedByAdmission,
 } from '@/shared/services/hmsStore'
-import { discountAmountFromPercent, parseDiscountPercent } from '@/shared/utils/discountLimits'
 import { refreshVisitWorkflow } from '@/shared/utils/visitConsultation'
 
 type StatusFilter = 'all' | 'active' | 'inactive'
@@ -65,9 +51,6 @@ const ReceptionAllInpatientsPage = () => {
   const { isSupabase, dataVersion } = useHmsStoreContext()
   const userRole = user?.role ?? 'reception_cashier'
   const receptionId = user?.id ?? 'staff-002'
-  const maxInpatientDiscount = getMaxDiscountPercent(userRole, 'inpatient')
-  const appliedDiscountPercent = (raw: string) =>
-    clampDiscountPercent(userRole, 'inpatient', parseDiscountPercent(raw))
   const [tick, setTick] = useState(0)
   const refresh = () => setTick((t) => t + 1)
 
@@ -76,19 +59,12 @@ const ReceptionAllInpatientsPage = () => {
   const [roomFilter, setRoomFilter] = useState<string>('all')
   const [selectedBedId, setSelectedBedId] = useState<string | null>(null)
   const [selectedAdmissionId, setSelectedAdmissionId] = useState<string | null>(null)
-  const [actionMsg, setActionMsg] = useState('')
-  const [actionErr, setActionErr] = useState('')
-  const [printReceipt, setPrintReceipt] = useState<ReceptionReceipt | null>(null)
-  const [showPrintModal, setShowPrintModal] = useState(false)
-  const [pendingReceipt, setPendingReceipt] = useState<ReceptionReceipt | null>(null)
-  const [discountInput, setDiscountInput] = useState('')
-  const [saving, setSaving] = useState(false)
   const [showEditRoomBed, setShowEditRoomBed] = useState(false)
   const [editRoomId, setEditRoomId] = useState('')
   const [editBedId, setEditBedId] = useState('')
-  const [editBillingMode, setEditBillingMode] = useState<InpatientBillingMode>('credit_book')
   const [editErr, setEditErr] = useState('')
   const [editSaving, setEditSaving] = useState(false)
+  const [editMsg, setEditMsg] = useState('')
 
   const filteredAdmissions = useMemo(() => {
     let list = getAllInpatientAdmissions()
@@ -118,6 +94,15 @@ const ReceptionAllInpatientsPage = () => {
     })
   }, [search, statusFilter, roomFilter, tick, dataVersion, admissions.length])
 
+  const admissionsPagination = useTablePagination(filteredAdmissions, 10, [
+    filteredAdmissions.length,
+    search,
+    statusFilter,
+    roomFilter,
+    tick,
+    dataVersion,
+  ])
+
   const unpaidAlerts = useMemo(
     () => getReceptionInpatientUnpaidAlerts(),
     [tick, dataVersion, admissions.length],
@@ -135,27 +120,9 @@ const ReceptionAllInpatientsPage = () => {
   const modalDoctor = modalVisit?.assignedDoctorId
     ? getStaffById(modalVisit.assignedDoctorId)
     : undefined
-  const ledger = modalAdm ? getInpatientBillingLedger(modalAdm.id) : []
-  const totalOutstanding = modalAdm ? getInpatientOutstandingTotal(modalAdm.id) : 0
-  const discountPercent = appliedDiscountPercent(discountInput)
-  const totalDiscountAmount = discountAmountFromPercent(totalOutstanding, discountPercent)
-  const totalAfterDiscount = Math.max(0, totalOutstanding - totalDiscountAmount)
-  const latestCheckoutReceipt = modalAdm ? getLatestInpatientCheckoutReceipt(modalAdm.id) : undefined
-
-  const buildDiscountOptions = (subtotal: number) => {
-    const percent = appliedDiscountPercent(discountInput)
-    const amount = discountAmountFromPercent(subtotal, percent)
-    return {
-      discountPercent: percent > 0 ? percent : undefined,
-      discountAmount: amount,
-    }
-  }
 
   const resetBillingForm = () => {
-    setActionMsg('')
-    setActionErr('')
-    setPendingReceipt(null)
-    setDiscountInput('')
+    setEditMsg('')
   }
 
   const openAdmission = (adm: Admission) => {
@@ -181,7 +148,6 @@ const ReceptionAllInpatientsPage = () => {
     if (!modalAdm) return
     setEditRoomId(modalAdm.roomId)
     setEditBedId(modalAdm.bedId)
-    setEditBillingMode(modalAdm.billingMode)
     setEditErr('')
     setShowEditRoomBed(true)
   }
@@ -200,12 +166,7 @@ const ReceptionAllInpatientsPage = () => {
     setEditSaving(true)
     setEditErr('')
     try {
-      const result = updateInpatientRoomBedByAdmission(
-        modalAdm.id,
-        editRoomId,
-        editBedId,
-        editBillingMode,
-      )
+      const result = updateInpatientRoomBedByAdmission(modalAdm.id, editRoomId, editBedId)
       if (!result.ok) {
         setEditErr(result.error ?? 'Could not update room/bed.')
         return
@@ -214,9 +175,7 @@ const ReceptionAllInpatientsPage = () => {
       if (isSupabase) await persistAdmissionAssignmentNowAsync()
       setSelectedBedId(editBedId)
       setShowEditRoomBed(false)
-      setActionMsg(
-        `Room & bed updated.${isSupabase ? ' Saved to database.' : ''}`,
-      )
+      setEditMsg(`Room & bed updated.${isSupabase ? ' Saved to database.' : ''}`)
       refresh()
     } catch (err) {
       setEditErr(err instanceof Error ? err.message : 'Database save failed.')
@@ -224,93 +183,6 @@ const ReceptionAllInpatientsPage = () => {
     } finally {
       setEditSaving(false)
     }
-  }
-
-  const openPrint = (receipt: ReceptionReceipt) => {
-    setPrintReceipt(receipt)
-    setShowPrintModal(true)
-  }
-
-  const handleRowAction = async (row: InpatientChargeRow) => {
-    if (!modalAdm) return
-    setActionErr('')
-    setActionMsg('')
-
-    if (isInpatientChargePaid(row.status)) {
-      openPrint(buildInpatientChargeReceipt(modalAdm, row, receptionId))
-      return
-    }
-
-    const discount = buildDiscountOptions(row.amount)
-    const paidAmount = Math.max(0, row.amount - discount.discountAmount)
-    setSaving(true)
-    try {
-      const result = collectInpatientChargePayment(modalAdm.id, row, receptionId, discount)
-      if (!result.ok) {
-        setActionErr(result.error ?? 'Could not collect payment.')
-        return
-      }
-      if (row.sourceType === 'lab' && modalVisit) refreshVisitWorkflow(modalVisit.id)
-      if (isSupabase) await persistInpatientPaymentNowAsync()
-      setActionMsg(
-        `Collected ${currency}${paidAmount.toFixed(2)}.${isSupabase ? ' Saved to database.' : ''}${
-          result.discharged ? ' Patient is now inactive (discharged).' : ''
-        } Click Print for receipt.`,
-      )
-      if (result.receipt) setPendingReceipt(result.receipt)
-      if (result.discharged) closeBillingModal()
-      refresh()
-    } catch (err) {
-      setActionErr(err instanceof Error ? err.message : 'Could not save payment to database')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const handleTotalPaid = async () => {
-    if (!modalAdm || totalOutstanding <= 0) return
-    setActionErr('')
-    setActionMsg('')
-
-    const discount = buildDiscountOptions(totalOutstanding)
-    setSaving(true)
-    try {
-      const result = collectInpatientTotalPayment(modalAdm.id, receptionId, discount)
-      if (!result.ok) {
-        setActionErr(result.error ?? 'Could not collect total payment.')
-        return
-      }
-      if (modalVisit) refreshVisitWorkflow(modalVisit.id)
-      if (isSupabase) await persistInpatientPaymentNowAsync()
-      setActionMsg(
-        `Total paid ${currency}${totalAfterDiscount.toFixed(2)}.${isSupabase ? ' Saved to database.' : ''}${
-          result.discharged ? ' Patient is now inactive (discharged).' : ''
-        }`,
-      )
-      if (result.receipt) {
-        setPendingReceipt(result.receipt)
-        openPrint(result.receipt)
-      }
-      if (result.discharged) closeBillingModal()
-      refresh()
-    } catch (err) {
-      setActionErr(err instanceof Error ? err.message : 'Could not save payment to database')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  const getRowActionLabel = (row: InpatientChargeRow): string | null => {
-    if (!modalAdm) return null
-    if (isInpatientChargePaid(row.status)) return 'Print receipt'
-    return 'Collect payment'
-  }
-
-  const getStatusBadge = (status: InpatientChargeRow['status']) => {
-    if (isInpatientChargePaid(status)) {
-      return <Badge bg="success-subtle" text="success">Paid</Badge>
-    }
-    return <Badge bg="danger-subtle" text="danger">Unpaid</Badge>
   }
 
   return (
@@ -407,8 +279,9 @@ const ReceptionAllInpatientsPage = () => {
           </CardBody>
         </Card>
       ) : (
-        <Row>
-          {filteredAdmissions.map((adm) => {
+        <>
+          <Row>
+            {admissionsPagination.pageItems.map((adm) => {
             const room = getRoomById(adm.roomId)
             const bed = beds.find((b) => b.id === adm.bedId)
             const patient = getPatientById(adm.patientId)
@@ -480,8 +353,18 @@ const ReceptionAllInpatientsPage = () => {
                 </Card>
               </Col>
             )
-          })}
-        </Row>
+            })}
+          </Row>
+          <TablePagination
+            className="pt-3 border-top mt-3"
+            totalItems={admissionsPagination.totalItems}
+            rangeStart={admissionsPagination.rangeStart}
+            rangeEnd={admissionsPagination.rangeEnd}
+            safePage={admissionsPagination.safePage}
+            totalPages={admissionsPagination.totalPages}
+            onPageChange={admissionsPagination.setPage}
+          />
+        </>
       )}
 
       <Modal
@@ -499,36 +382,9 @@ const ReceptionAllInpatientsPage = () => {
           </Modal.Title>
         </Modal.Header>
         <Modal.Body>
-          {actionMsg && (
-            <Alert
-              variant="success"
-              dismissible
-              onClose={() => {
-                setActionMsg('')
-                setPendingReceipt(null)
-              }}
-            >
-              <div className="d-flex flex-wrap align-items-center gap-2">
-                <span>{actionMsg}</span>
-                {pendingReceipt && (
-                  <Button
-                    size="sm"
-                    variant="outline-success"
-                    onClick={() => {
-                      openPrint(pendingReceipt)
-                      setPendingReceipt(null)
-                    }}
-                  >
-                    <IconifyIcon icon="solar:printer-broken" className="me-1" />
-                    Print
-                  </Button>
-                )}
-              </div>
-            </Alert>
-          )}
-          {actionErr && (
-            <Alert variant="danger" dismissible onClose={() => setActionErr('')}>
-              {actionErr}
+          {editMsg && (
+            <Alert variant="success" dismissible onClose={() => setEditMsg('')}>
+              {editMsg}
             </Alert>
           )}
 
@@ -612,165 +468,15 @@ const ReceptionAllInpatientsPage = () => {
                 </CardBody>
               </Card>
 
-              <InpatientBillingModeSelector
-                value={modalAdm.billingMode}
-                nightlyRate={modalBed?.dailyRate ?? 0}
-                readOnly
-                namePrefix="all-inpatient"
+              <InpatientChargesSection
+                admissionId={modalAdm.id}
+                receptionId={receptionId}
+                userRole={userRole}
+                isSupabase={isSupabase}
+                dataVersion={dataVersion}
+                onRefresh={refresh}
+                onDischarged={closeBillingModal}
               />
-
-              {totalOutstanding > 0 && (
-                <Card className="mt-3 border-0 bg-light">
-                  <CardBody className="py-3">
-                    <Row className="g-3 align-items-end">
-                      <Col sm={6}>
-                        <Form.Group className="mb-0">
-                          <Form.Label>Discount (%) — optional</Form.Label>
-                          <div className="input-group">
-                            <Form.Control
-                              type="number"
-                              min={0}
-                              max={maxInpatientDiscount}
-                              step={0.01}
-                              placeholder="0"
-                              value={discountInput}
-                              onChange={(e) => setDiscountInput(e.target.value)}
-                            />
-                            <span className="input-group-text">%</span>
-                          </div>
-                          <Form.Text className="text-muted">
-                            Maximum allowed: <strong>{maxInpatientDiscount}%</strong>
-                          </Form.Text>
-                        </Form.Group>
-                      </Col>
-                      <Col sm={6}>
-                        <div className="p-3 bg-primary bg-opacity-10 rounded border border-primary border-opacity-25">
-                          <div className="d-flex justify-content-between small">
-                            <span>Subtotal (unpaid)</span>
-                            <span>
-                              {currency}
-                              {totalOutstanding.toFixed(2)}
-                            </span>
-                          </div>
-                          {totalDiscountAmount > 0 && (
-                            <div className="d-flex justify-content-between small text-success">
-                              <span>Discount ({discountPercent}%)</span>
-                              <span>
-                                −{currency}
-                                {totalDiscountAmount.toFixed(2)}
-                              </span>
-                            </div>
-                          )}
-                          <div className="d-flex justify-content-between fw-semibold mt-2 pt-2 border-top">
-                            <span>Total due</span>
-                            <span>
-                              {currency}
-                              {totalAfterDiscount.toFixed(2)}
-                            </span>
-                          </div>
-                        </div>
-                      </Col>
-                    </Row>
-                  </CardBody>
-                </Card>
-              )}
-
-              <div className="mt-3">
-                <h6 className="mb-2">Charges</h6>
-                {ledger.length === 0 ? (
-                  <p className="text-muted small mb-0">No charges yet.</p>
-                ) : (
-                  <div className="table-responsive">
-                    <Table size="sm" hover className="mb-0">
-                      <thead className="bg-light">
-                        <tr>
-                          <th>Date</th>
-                          <th>Description</th>
-                          <th className="text-end">Amount</th>
-                          <th>Status</th>
-                          <th>Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {ledger.map((row) => {
-                          const actionLabel = getRowActionLabel(row)
-                          return (
-                            <tr key={row.id}>
-                              <td className="small">{row.date}</td>
-                              <td className="small">{row.description}</td>
-                              <td className="text-end small">
-                                {currency}
-                                {row.amount}
-                              </td>
-                              <td>{getStatusBadge(row.status)}</td>
-                              <td>
-                                {actionLabel ? (
-                                  <Button
-                                    size="sm"
-                                    variant={
-                                      isInpatientChargePaid(row.status) ? 'outline-secondary' : 'success'
-                                    }
-                                    disabled={saving}
-                                    onClick={() => void handleRowAction(row)}
-                                  >
-                                    {actionLabel}
-                                  </Button>
-                                ) : (
-                                  '—'
-                                )}
-                              </td>
-                            </tr>
-                          )
-                        })}
-                      </tbody>
-                      <tfoot className="bg-light">
-                        <tr>
-                          <td colSpan={2} className="fw-semibold text-end">
-                            Total Unpaid
-                          </td>
-                          <td className="text-end fw-bold">
-                            {currency}
-                            {totalAfterDiscount.toFixed(2)}
-                            {totalDiscountAmount > 0 && (
-                              <div className="small text-muted fw-normal text-decoration-line-through">
-                                {currency}
-                                {totalOutstanding.toFixed(2)}
-                              </div>
-                            )}
-                          </td>
-                          <td>
-                            {totalOutstanding > 0 ? (
-                              <Badge bg="danger-subtle" text="danger">
-                                Unpaid
-                              </Badge>
-                            ) : (
-                              <Badge bg="success-subtle" text="success">
-                                Paid
-                              </Badge>
-                            )}
-                          </td>
-                          <td>
-                            {totalOutstanding > 0 ? (
-                              <Button size="sm" variant="success" disabled={saving} onClick={() => void handleTotalPaid()}>
-                                Total Paid
-                              </Button>
-                            ) : latestCheckoutReceipt ? (
-                              <Button
-                                size="sm"
-                                variant="outline-secondary"
-                                onClick={() => openPrint(latestCheckoutReceipt)}
-                              >
-                                <IconifyIcon icon="solar:printer-broken" className="me-1" />
-                                Print receipt
-                              </Button>
-                            ) : null}
-                          </td>
-                        </tr>
-                      </tfoot>
-                    </Table>
-                  </div>
-                )}
-              </div>
             </>
           ) : (
             <Alert variant="info" className="mb-0">
@@ -806,10 +512,8 @@ const ReceptionAllInpatientsPage = () => {
             <InpatientRoomBedFields
               roomId={editRoomId}
               bedId={editBedId}
-              billingMode={editBillingMode}
               onRoomChange={setEditRoomId}
               onBedChange={setEditBedId}
-              onBillingModeChange={setEditBillingMode}
               isEditMode
               excludeAdmissionId={modalAdm?.id}
               currentBedId={modalAdm?.bedId}
@@ -825,32 +529,6 @@ const ReceptionAllInpatientsPage = () => {
             </Button>
           </Modal.Footer>
         </Form>
-      </Modal>
-
-      <Modal
-        show={showPrintModal}
-        onHide={() => setShowPrintModal(false)}
-        centered
-        className="thermal-print-modal"
-        dialogClassName="thermal-print-dialog"
-      >
-        <Modal.Header closeButton className="no-print">
-          <Modal.Title>
-            {printReceipt?.type === 'checkout' && (printReceipt.lineItems.length ?? 0) > 1
-              ? 'Print total paid receipt'
-              : 'Print receipt'}
-          </Modal.Title>
-        </Modal.Header>
-        <Modal.Body>{printReceipt && <PrintableReceipt receipt={printReceipt} />}</Modal.Body>
-        <Modal.Footer className="no-print">
-          <Button variant="light" onClick={() => setShowPrintModal(false)}>
-            Close
-          </Button>
-          <Button variant="primary" onClick={() => window.print()}>
-            <IconifyIcon icon="solar:printer-broken" className="me-1" />
-            Print
-          </Button>
-        </Modal.Footer>
       </Modal>
     </PermissionGuard>
   )

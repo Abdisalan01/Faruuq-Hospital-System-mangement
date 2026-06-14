@@ -7,6 +7,8 @@ import { currency } from '@/context/constants'
 import { useHmsStoreContext } from '@/context/HmsStoreContext'
 import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
+import TablePagination from '@/shared/components/TablePagination'
+import { useTablePagination } from '@/shared/hooks/useTablePagination'
 import {
   beds,
   deleteBedEntry,
@@ -59,6 +61,10 @@ const RoomBedManagementPage = () => {
     () => getBedsForRoom(selectedRoomId),
     [selectedRoomId, dataVersion, beds.length],
   )
+
+  const wardPagination = useTablePagination(wardRows, 10, [wardRows.length, dataVersion])
+  const roomPagination = useTablePagination(roomRows, 10, [roomRows.length, dataVersion])
+  const bedPagination = useTablePagination(roomBeds, 10, [roomBeds.length, selectedRoomId, dataVersion])
 
   const deleteSummary = useMemo(() => {
     if (!deleteTarget) return ''
@@ -284,7 +290,7 @@ const RoomBedManagementPage = () => {
                         </td>
                       </tr>
                     ) : (
-                      wardRows.map((ward) => {
+                      wardPagination.pageItems.map((ward) => {
                         const roomCount = rooms.filter((r) => r.wardId === ward.id).length
                         return (
                           <tr key={ward.id}>
@@ -308,6 +314,15 @@ const RoomBedManagementPage = () => {
                   </tbody>
                 </Table>
               </div>
+              <TablePagination
+                className="pt-3 border-top mt-3"
+                totalItems={wardPagination.totalItems}
+                rangeStart={wardPagination.rangeStart}
+                rangeEnd={wardPagination.rangeEnd}
+                safePage={wardPagination.safePage}
+                totalPages={wardPagination.totalPages}
+                onPageChange={wardPagination.setPage}
+              />
             </CardBody>
           </Card>
 
@@ -338,7 +353,7 @@ const RoomBedManagementPage = () => {
                         </td>
                       </tr>
                     ) : (
-                      roomRows.map((room) => {
+                      roomPagination.pageItems.map((room) => {
                         const ward = wards.find((w) => w.id === room.wardId)
                         const count = getBedsForRoom(room.id).length
                         const isSelected = selectedRoomId === room.id
@@ -367,6 +382,15 @@ const RoomBedManagementPage = () => {
                   </tbody>
                 </Table>
               </div>
+              <TablePagination
+                className="pt-3 border-top mt-3"
+                totalItems={roomPagination.totalItems}
+                rangeStart={roomPagination.rangeStart}
+                rangeEnd={roomPagination.rangeEnd}
+                safePage={roomPagination.safePage}
+                totalPages={roomPagination.totalPages}
+                onPageChange={roomPagination.setPage}
+              />
             </CardBody>
           </Card>
         </Col>
@@ -385,7 +409,8 @@ const RoomBedManagementPage = () => {
               {!selectedRoomId ? (
                 <p className="text-muted">Select a room to manage beds.</p>
               ) : (
-                <div className="table-responsive">
+                <>
+                  <div className="table-responsive">
                   <Table hover size="sm" className="mb-0 align-middle">
                     <thead className="bg-light bg-opacity-50">
                       <tr>
@@ -404,7 +429,7 @@ const RoomBedManagementPage = () => {
                           </td>
                         </tr>
                       ) : (
-                        roomBeds.map((bed) => (
+                        bedPagination.pageItems.map((bed) => (
                           <tr key={bed.id}>
                             <td>{bed.bedNumber}</td>
                             <td>{bed.name}</td>
@@ -436,6 +461,16 @@ const RoomBedManagementPage = () => {
                     </tbody>
                   </Table>
                 </div>
+                <TablePagination
+                  className="pt-3 border-top mt-3"
+                  totalItems={bedPagination.totalItems}
+                  rangeStart={bedPagination.rangeStart}
+                  rangeEnd={bedPagination.rangeEnd}
+                  safePage={bedPagination.safePage}
+                  totalPages={bedPagination.totalPages}
+                  onPageChange={bedPagination.setPage}
+                />
+                </>
               )}
             </CardBody>
           </Card>

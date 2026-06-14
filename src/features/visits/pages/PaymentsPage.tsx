@@ -1,12 +1,15 @@
-import { useState } from 'react'
-import { Button, Card, CardBody, Col, Form, Row, Table } from 'react-bootstrap'
+import { useMemo, useState } from 'react'
+import { Alert, Button, Card, CardBody, Col, Form, Row, Table } from 'react-bootstrap'
 
 import PageMetaData from '@/components/PageTitle'
 import IconifyIcon from '@/components/wrappers/IconifyIcon'
 import { currency } from '@/context/constants'
 import { useAuthContext } from '@/context/useAuthContext'
+import { useHmsStoreContext } from '@/context/HmsStoreContext'
 import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
+import TablePagination from '@/shared/components/TablePagination'
+import { useTablePagination } from '@/shared/hooks/useTablePagination'
 import {
   generateId,
   generateNumber,
@@ -16,13 +19,18 @@ import {
   incomeRecords,
   patients,
   payments,
+  persistPatientsNowAsync,
   systemSettings,
+  touchHmsStore,
   visits,
 } from '@/shared/services/hmsStore'
 
 const PaymentsPage = () => {
   const { user } = useAuthContext()
+  const { isSupabase } = useHmsStoreContext()
   const [refresh, setRefresh] = useState(0)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState<{ type: 'success' | 'danger'; text: string } | null>(null)
   const [patientId, setPatientId] = useState('')
   const [visitId, setVisitId] = useState('')
   const [amount, setAmount] = useState(systemSettings.consultationFee)
@@ -42,9 +50,22 @@ const PaymentsPage = () => {
     }
   }
 
-  const sortedPayments = [...payments].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+  const sortedPayments = useMemo(
+    () => [...payments].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    [payments.length, refresh],
+  )
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const {
+    pageItems,
+    setPage,
+    safePage,
+    totalPages,
+    rangeStart,
+    rangeEnd,
+    totalItems,
+  } = useTablePagination(sortedPayments, 10, [sortedPayments.length, refresh])
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     const receiptNumber = generateNumber('RCP')
     const payment = {
@@ -70,11 +91,26 @@ const PaymentsPage = () => {
       receivedBy: user?.id ?? 'staff-002',
       createdAt: new Date().toISOString(),
     })
-    setRefresh((r) => r + 1)
-    setPatientId('')
-    setVisitId('')
-    setAmount(systemSettings.consultationFee)
-    setDescription('Consultation Fee')
+    touchHmsStore()
+    setSaving(true)
+    setMessage(null)
+    try {
+      if (isSupabase) await persistPatientsNowAsync()
+      setMessage({
+        type: 'success',
+        text: `Payment recorded — ${receiptNumber}.${isSupabase ? ' Saved to database.' : ''}`,
+      })
+      setPatientId('')
+      setVisitId('')
+      setAmount(systemSettings.consultationFee)
+      setDescription('Consultation Fee')
+      setRefresh((r) => r + 1)
+    } catch {
+      setMessage({ type: 'danger', text: 'Payment saved locally but database sync failed.' })
+      setRefresh((r) => r + 1)
+    } finally {
+      setSaving(false)
+    }
   }
 
   const printReceipt = (receiptNumber: string) => {
@@ -93,6 +129,12 @@ const PaymentsPage = () => {
           { label: 'Payments' },
         ]}
       />
+
+      {message && (
+        <Alert variant={message.type} dismissible onClose={() => setMessage(null)} className="py-2">
+          {message.text}
+        </Alert>
+      )}
 
       <Card className="mb-3">
         <CardBody>
@@ -155,8 +197,8 @@ const PaymentsPage = () => {
                 </Form.Group>
               </Col>
             </Row>
-            <Button type="submit" variant="success">
-              Record Payment
+            <Button type="submit" variant="success" disabled={saving}>
+              {saving ? 'Saving…' : 'Record Payment'}
             </Button>
           </Form>
         </CardBody>
@@ -186,7 +228,7 @@ const PaymentsPage = () => {
                     </td>
                   </tr>
                 ) : (
-                  sortedPayments.map((payment) => {
+                  pageItems.map((payment) => {
                     const patient = getPatientById(payment.patientId)
                     return (
                       <tr key={payment.id}>
@@ -211,6 +253,15 @@ const PaymentsPage = () => {
               </tbody>
             </Table>
           </div>
+          <TablePagination
+            className="pt-3 border-top mt-3"
+            totalItems={totalItems}
+            rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
+            safePage={safePage}
+            totalPages={totalPages}
+            onPageChange={setPage}
+          />
         </CardBody>
       </Card>
     </PermissionGuard>

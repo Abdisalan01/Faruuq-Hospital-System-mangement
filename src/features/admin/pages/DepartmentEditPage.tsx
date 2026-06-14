@@ -1,20 +1,24 @@
 import { useState } from 'react'
-import { Button, Card, CardBody, Col, Form, Row } from 'react-bootstrap'
+import { Alert, Button, Card, CardBody, Col, Form, Row } from 'react-bootstrap'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 
 import PageMetaData from '@/components/PageTitle'
+import { useHmsStoreContext } from '@/context/HmsStoreContext'
 import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
-import { getDepartmentById } from '@/shared/services/hmsStore'
+import { getDepartmentById, persistFullSnapshotNowAsync, touchHmsStore } from '@/shared/services/hmsStore'
 
 const DepartmentEditPage = () => {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { isSupabase } = useHmsStoreContext()
   const dept = id ? getDepartmentById(id) : undefined
 
   const [name, setName] = useState(dept?.name ?? '')
   const [description, setDescription] = useState(dept?.description ?? '')
   const [isActive, setIsActive] = useState(dept?.isActive ?? true)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
 
   if (!dept) {
     return (
@@ -26,12 +30,21 @@ const DepartmentEditPage = () => {
     )
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     dept.name = name
     dept.description = description
     dept.isActive = isActive
-    navigate(`/hms/administration/departments/${dept.id}`)
+    touchHmsStore()
+    setSaving(true)
+    setMessage('')
+    try {
+      if (isSupabase) await persistFullSnapshotNowAsync()
+      navigate(`/hms/administration/departments/${dept.id}`)
+    } catch {
+      setMessage('Saved locally but database save failed. Try again.')
+      setSaving(false)
+    }
   }
 
   return (
@@ -48,6 +61,11 @@ const DepartmentEditPage = () => {
       />
       <Card>
         <CardBody>
+          {message && (
+            <Alert variant="danger" className="py-2">
+              {message}
+            </Alert>
+          )}
           <Form onSubmit={handleSubmit}>
             <Row>
               <Col md={12}>
@@ -67,8 +85,8 @@ const DepartmentEditPage = () => {
               </Col>
             </Row>
             <div className="d-flex gap-2">
-              <Button type="submit" variant="success">
-                Save Changes
+              <Button type="submit" variant="success" disabled={saving}>
+                {saving ? 'Saving…' : 'Save Changes'}
               </Button>
               <Link to={`/hms/administration/departments/${dept.id}`} className="btn btn-light">
                 Cancel

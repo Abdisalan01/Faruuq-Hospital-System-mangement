@@ -1,16 +1,14 @@
 import { useMemo } from 'react'
-import { Form } from 'react-bootstrap'
 
 import { currency } from '@/context/constants'
+import SearchableSelect from '@/shared/components/SearchableSelect'
 import { getActiveLabTests, labTestCatalog } from '@/shared/services/hmsStore'
+import { DEFAULT_LAB_TEST_CATEGORIES } from '@/shared/types'
 import type { LabTestCategory } from '@/shared/types'
 
-const CATEGORY_ORDER: LabTestCategory[] = ['Laboratory', 'Radiology', 'Imaging']
-
-const formatOptionLabel = (testName: string, sampleType?: string, price?: number) => {
-  const sample = sampleType && sampleType !== 'N/A' ? ` · ${sampleType}` : ''
+const formatOptionLabel = (testName: string, price?: number) => {
   const priceText = price != null ? ` (${currency}${price})` : ''
-  return `${testName}${sample}${priceText}`
+  return `${testName}${priceText}`
 }
 
 type LabTestSelectProps = {
@@ -20,40 +18,53 @@ type LabTestSelectProps = {
   placeholder?: string
   categoryFilter?: LabTestCategory | 'all'
   excludeNames?: string[]
+  disabled?: boolean
 }
 
 export const LabTestSelect = ({
   value,
   onChange,
   size,
-  placeholder = 'Select test...',
+  placeholder = 'Search lab test name or category...',
   categoryFilter = 'all',
   excludeNames = [],
+  disabled,
 }: LabTestSelectProps) => {
-  const grouped = useMemo(() => {
+  const groups = useMemo(() => {
     const active = getActiveLabTests(categoryFilter === 'all' ? undefined : categoryFilter)
     const excluded = new Set(excludeNames.filter(Boolean))
     const filtered = active.filter((t) => !excluded.has(t.testName) || t.testName === value)
 
-    return CATEGORY_ORDER.map((category) => ({
-      category,
-      tests: filtered.filter((t) => t.category === category),
-    })).filter((g) => g.tests.length > 0)
+    const known = new Set<string>(DEFAULT_LAB_TEST_CATEGORIES)
+    const ordered = [
+      ...DEFAULT_LAB_TEST_CATEGORIES.filter((c) => filtered.some((t) => t.category === c)),
+      ...[...new Set(filtered.map((t) => t.category))]
+        .filter((c) => !known.has(c))
+        .sort((a, b) => a.localeCompare(b)),
+    ]
+
+    return ordered.map((category) => ({
+      label: category,
+      options: filtered
+        .filter((t) => t.category === category)
+        .map((t) => ({
+          value: t.testName,
+          label: formatOptionLabel(t.testName, t.price),
+          searchText: `${t.testName} ${t.testId} ${t.category} ${t.unitReference ?? ''}`,
+        })),
+    }))
   }, [categoryFilter, excludeNames, value, labTestCatalog.length])
 
   return (
-    <Form.Select size={size} value={value} onChange={(e) => onChange(e.target.value)}>
-      <option value="">{placeholder}</option>
-      {grouped.map(({ category, tests }) => (
-        <optgroup key={category} label={category}>
-          {tests.map((t) => (
-            <option key={t.id} value={t.testName}>
-              {formatOptionLabel(t.testName, t.sampleType, t.price)}
-            </option>
-          ))}
-        </optgroup>
-      ))}
-    </Form.Select>
+    <SearchableSelect
+      value={value}
+      onChange={onChange}
+      groups={groups}
+      placeholder={placeholder}
+      size={size}
+      disabled={disabled}
+      emptyMessage="No lab test found — try another search"
+    />
   )
 }
 

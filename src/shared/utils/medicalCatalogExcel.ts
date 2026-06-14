@@ -125,7 +125,7 @@ const upsertMedicalRow = (row: ParsedMedicalRow) => {
     sellingPrice: row.sellingPrice,
     quantityInStock: row.quantityInStock,
     reorderLevel: row.reorderLevel,
-  })
+  }, { skipSchedulePersist: true })
 
   if (existing) {
     return wasOutOfStock && row.quantityInStock > 0 ? 'restocked' : 'updated'

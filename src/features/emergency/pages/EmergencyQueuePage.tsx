@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { Card, CardBody, Table } from 'react-bootstrap'
 import { Link } from 'react-router-dom'
 
@@ -5,10 +6,25 @@ import PageMetaData from '@/components/PageTitle'
 import PageHeader from '@/shared/components/PageHeader'
 import { PermissionGuard } from '@/shared/components/PermissionGuard'
 import StatusBadge from '@/shared/components/StatusBadge'
+import TablePagination from '@/shared/components/TablePagination'
+import { useTablePagination } from '@/shared/hooks/useTablePagination'
 import { emergencyCases, getPatientById } from '@/shared/services/hmsStore'
 
 const EmergencyQueuePage = () => {
-  const activeCases = emergencyCases.filter((e) => e.status === 'Active')
+  const activeCases = useMemo(
+    () => emergencyCases.filter((e) => e.status === 'Active'),
+    [emergencyCases.length],
+  )
+
+  const {
+    pageItems,
+    setPage,
+    safePage,
+    totalPages,
+    rangeStart,
+    rangeEnd,
+    totalItems,
+  } = useTablePagination(activeCases)
 
   return (
     <PermissionGuard permissions={['triage', 'emergency_registration']}>
@@ -28,23 +44,41 @@ const EmergencyQueuePage = () => {
                 </tr>
               </thead>
               <tbody>
-                {activeCases.map((c) => (
-                  <tr key={c.id}>
-                    <td>{c.emgNumber}</td>
-                    <td>{getPatientById(c.patientId)?.fullName}</td>
-                    <td>
-                      <StatusBadge status={c.severity} />
-                    </td>
-                    <td>{new Date(c.arrivalTime).toLocaleString()}</td>
-                    <td>
-                      <Link to={`/hms/emergency/consultation/${c.id}`} className="btn btn-sm btn-soft-danger">
-                        Treat
-                      </Link>
+                {pageItems.length === 0 ? (
+                  <tr>
+                    <td colSpan={5} className="text-center text-muted py-4">
+                      No active emergency cases
                     </td>
                   </tr>
-                ))}
+                ) : (
+                  pageItems.map((c) => (
+                    <tr key={c.id}>
+                      <td>{c.emgNumber}</td>
+                      <td>{getPatientById(c.patientId)?.fullName}</td>
+                      <td>
+                        <StatusBadge status={c.severity} />
+                      </td>
+                      <td>{new Date(c.arrivalTime).toLocaleString()}</td>
+                      <td>
+                        <Link to={`/hms/emergency/consultation/${c.id}`} className="btn btn-sm btn-soft-danger">
+                          Treat
+                        </Link>
+                      </td>
+                    </tr>
+                  ))
+                )}
               </tbody>
             </Table>
+          </div>
+          <div className="p-3 border-top">
+            <TablePagination
+              totalItems={totalItems}
+              rangeStart={rangeStart}
+              rangeEnd={rangeEnd}
+              safePage={safePage}
+              totalPages={totalPages}
+              onPageChange={setPage}
+            />
           </div>
         </CardBody>
       </Card>
