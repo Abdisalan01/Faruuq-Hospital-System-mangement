@@ -12,7 +12,7 @@ export const contactUs = 'techzaastudio@gmail.com'
 
 export const buyLink = ''
 
-export const basePath = '/Faaruuq_hms/'
+export const basePath = '/'
 
 export const DEFAULT_PAGE_TITLE = 'FSH Hospital | Hospital Management System'
 
