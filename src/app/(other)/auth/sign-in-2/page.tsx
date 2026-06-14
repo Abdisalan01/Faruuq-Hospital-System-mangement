@@ -20,10 +20,6 @@ const SignIn2 = () => {
             <p className="text-muted text-center mt-1 mb-4">Hospital Management System — sign in with your staff credentials.</p>
             <div className="px-4">
               <LoginForm />
-              <div className="mt-3 p-2 bg-light rounded small">
-                <p className="mb-1 fw-semibold">Demo Accounts (password: password)</p>
-                <p className="mb-0 text-muted">admin@hms.com · reception@hms.com · doctor@hms.com · nurse@hms.com · lab@hms.com · pharmacy@hms.com · emergency@hms.com</p>
-              </div>
             </div>
           </CardBody>
         </Card>
